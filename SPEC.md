@@ -7,7 +7,9 @@ representatives have actually done (votes, sponsored bills, news coverage),
 and how they compare to peers — so people can vote informed without doing
 hours of their own research.
 
-**Pilot jurisdiction:** Utah State Legislature (House + Senate).
+**Pilot jurisdiction:** one US state legislature (both chambers). Kept
+generic in this file by design, along with the state-specific facts
+referenced in the stages below.
 **Planned expansion:** US Congress, then optionally other states.
 **Distribution model:** open source (AGPL-3.0, already in `LICENSE.txt`).
 The codebase must stay jurisdiction-agnostic enough that someone in another
@@ -69,18 +71,47 @@ re-litigating per stage:
    dependencies for local dev — happy to use it for Stage 0-2 and swap
    later if that's preferred, but Postgres is the better default given the
    comparison-heavy feature set.
-3. **"Jurisdiction adapter" plugin architecture.** Each jurisdiction (Utah
-   legislature, US Congress, future states) implements a common interface
-   (`fetchLegislators`, `fetchVotes`, `fetchBills`, `fetchNews`, ...). The
-   core app only knows about the interface, not the specifics of any one
-   state's data source. This is what makes "point it at your own state"
-   realistic for other adopters.
-4. **Modular "views" system for comparisons/visualizations.** Per your
-   request, each comparison view (radar chart, voting-alignment %,
-   issue-area scorecard, peer leaderboard, promises-vs-actions) is a
-   self-contained module registered against the core data model, not
-   hardcoded into a single page — new views can be added or removed without
-   touching the others.
+3. **Four-layer modular pipeline** (see [README.md](README.md) "How it's
+   structured" for the canonical description — terminology here matches
+   it exactly):
+   - **Data collectors** — one module per data source (a jurisdiction's
+     government API, an RSS feed, a social platform's oEmbed integration,
+     a manually-curated list, ...), each responsible only for fetching its
+     own source's raw data. The `JurisdictionAdapter` interface
+     (`fetchLegislators`, `fetchVotes`, `fetchBills`, `fetchNews`, ...) is
+     the collector contract for government sources specifically; Stage 5's
+     RSS/GDELT/oEmbed integrations are collectors of the same kind for
+     news and social sources.
+   - **Data aggregator** — a modular interface that merges what the
+     collectors return into the core data model (`Politician`, `Vote`,
+     `Bill`, `NewsItem`/`SocialPost`, `Claim`, ...), regardless of which
+     collector or source format it came from.
+   - **Data processors** — modules that take aggregated data and distill
+     it into derived information: issue-area tagging, the claim
+     extraction + `verification_status` pipeline (see "Claim-preserving
+     content model" below), voting-alignment calculations, AI
+     summarization. Each is a self-contained module, not one monolithic
+     transform step.
+   - **Data presenter** — modules that render processor output as
+     digestible, honest views with links back to primary sources:
+     visualizers (radar chart, scorecards, leaderboards), filters, and
+     text summaries. This is what Stage 4 builds.
+
+   The core app only knows about these four interfaces, never the
+   specifics of any one source/processor/view — that's what makes "point
+   it at your own state" and "add/remove a comparison view" both realistic
+   for other adopters, per your build-to-be-forked goal.
+5. **Presenters call service functions, never the database directly.**
+   Next.js makes it easy for page/component code to query Postgres inline
+   (e.g. straight from a Server Component) — convenient short-term, but it
+   quietly turns the UI layer into the only place an API contract would
+   exist, which makes extracting a separate backend later an exercise in
+   reverse-engineering one rather than just moving files. Costs nothing to
+   avoid now: all data access from presenter code goes through named
+   service functions (e.g. `getPoliticianProfile(id)`,
+   `getVotingAlignment(a, b)`) defined alongside the processor/aggregator
+   layer, not inline queries in page/component code. Starting in Stage 3
+   (first real pages), not something to retrofit later.
 
 ---
 
@@ -95,11 +126,18 @@ defamatory claim, and while public officials generally have to clear a
 high bar (actual malice) to win a defamation suit over official conduct,
 that protection isn't something to build the whole system's safety around
 — it can vary by jurisdiction, by whether the target counts as a public
-figure for the specific statement at issue, and Utah in particular applies
-a different, lower fault standard for private individuals who might get
-swept into scraped content. None of this is legal advice; it's the
-engineering response to that risk, and a real legal review is still the
-plan before Stage 5 ships (see Editorial stance above).
+figure for the specific statement at issue, and the pilot state's own
+courts may apply a different, lower fault standard for private
+individuals who might get swept into scraped content. None of this is
+legal advice; it's the engineering response to that risk, and a real
+legal review is still the plan before Stage 5 ships (see Editorial stance
+above).
+
+In pipeline terms (see "Four-layer modular pipeline" above), everything
+below is what the **data processor** layer does with claim-bearing
+content specifically — collectors and the aggregator just get raw,
+attributed content into the database; processors are where verification
+status, corroboration, and summarization get computed.
 
 **The core rule: the pipeline extracts and attributes claims, it never
 asserts them.**
@@ -202,9 +240,9 @@ individuals who aren't the political figures being profiled), false
 light and related state-law claims, election-law exposure if the project
 ever becomes affiliated with a campaign/PAC/political ad, and AI-
 disclosure/consumer-protection rules depending on how the site markets
-itself. Utah-specific defamation privilege and the public/private-figure
-fault-standard split should be part of that same review given the pilot
-jurisdiction.
+itself. The pilot state's specific defamation privilege and
+public/private-figure fault-standard split should be part of that same
+review.
 
 ---
 
@@ -238,9 +276,13 @@ placeholder homepage, CI passes on an empty test suite. No real data yet.
   model" above) — defined now even though it isn't populated until
   Stage 5, so the schema is claim-aware from the start rather than
   bolted on later.
-- Define the `JurisdictionAdapter` TypeScript interface and a stub/mock
-  adapter with fake data, so Stage 2+ has something concrete to implement
-  against and the UI in Stage 3 can be built in parallel against mock data.
+- Define the TypeScript interfaces for all four pipeline layers (data
+  collector, data aggregator, data processor, data presenter — see
+  "Four-layer modular pipeline" above), even though only the collector
+  (`JurisdictionAdapter`) and aggregator get real implementations before
+  Stage 5. A stub/mock `JurisdictionAdapter` with fake data gives Stage 2+
+  something concrete to implement against and lets the UI in Stage 3 be
+  built in parallel against mock data.
 
 **Key decisions to confirm:**
 - Issue-area taxonomy: fixed list (e.g. healthcare, education, taxes,
@@ -255,28 +297,27 @@ the UI can render against; no external calls yet.
 
 ---
 
-## Stage 2 — Utah legislature data pipeline (primary sources only)
+## Stage 2 — Pilot-state legislature data pipeline (primary sources only)
 
 **Build:**
-- Research task first: confirm what Utah's legislature actually exposes.
-  Utah (`le.utah.gov`) has historically published bill/vote data in
-  structured form (XML/JSON feeds) — needs verification before building
-  against it, since this is an assumption, not a confirmed fact.
-- Implement the real `UtahJurisdictionAdapter`: legislator roster, bill
-  list, roll-call votes, committee membership, term info.
+- Research task first: confirm what the pilot state's legislature
+  actually exposes via API/structured data — needs verification before
+  building against it, since this is an assumption, not a confirmed fact.
+- Implement the real `JurisdictionAdapter` for the pilot state: legislator
+  roster, bill list, roll-call votes, committee membership, term info.
 - Scheduled ingestion job (cron or manual trigger) that syncs this into
   Postgres.
 
 **Key decisions to confirm:**
 - None yet beyond the research outcome — this stage's real first step is
-  "figure out what Utah's API actually gives us" before locking the
-  adapter's shape. I'll report back with what's available before writing
-  the ingestion code.
+  "figure out what the pilot state's API actually gives us" before
+  locking the adapter's shape. I'll report back with what's available
+  before writing the ingestion code.
 
-**Verification:** ingestion job run against real Utah data populates the
-DB with a plausible number of legislators (Utah has 104: 75 House + 29
-Senate) and their recent votes; spot-check a handful of records against
-the legislature's own website for accuracy.
+**Verification:** ingestion job run against real data populates the DB
+with a plausible number of legislators for the pilot state's chambers and
+their recent votes; spot-check a handful of records against the
+legislature's own website for accuracy.
 
 ---
 
@@ -285,7 +326,9 @@ the legislature's own website for accuracy.
 **Build:**
 - Profile page: photo, bio, current office/district, voting record list,
   sponsored bills — all from Stage 2 data, all primary-source so no review
-  gate needed.
+  gate needed. Fetched via service functions (`getPoliticianProfile(id)`,
+  etc.), not inline DB queries in the page component — see cross-cutting
+  decision #5 above; this is the stage that habit starts in.
 - Lay out the page's section structure now even though only "Verified
   facts" has content until Stage 5: *Verified facts | Claims & allegations
   | Responses | Analysis/opinion | Source material* (per "Claim-preserving
@@ -297,21 +340,22 @@ the legislature's own website for accuracy.
   policy.
 
 **Key decisions to confirm:**
-- Bio text source: Utah's legislature site likely has short official bios
-  per member, but that's scraped HTML, not an API — first scraping target
+- Bio text source: the pilot state's legislature site likely has short
+  official bios per member, but that's scraped HTML, not an API — first
+  scraping target
   under the "hybrid, case by case" sourcing decision. Confirm that's an
   acceptable use (public official bios on a government site, low risk) vs.
   waiting and asking you before scraping even this.
 
-**Verification:** every seated Utah legislator has a working profile page
+**Verification:** every seated legislator in the pilot state has a working profile page
 with real name/district/votes; manually spot-check 5-10 profiles against
 official sources.
 
 ---
 
-## Stage 4 — Comparison & visualization modules
+## Stage 4 — Comparison & visualization modules (data presenter layer)
 
-**Build:** the modular views system, with initial modules:
+**Build:** the data presenter layer's initial modules:
 - Radar chart: issue-area stance per politician (derived from vote record
   × issue-area tagging from Stage 1).
 - Voting alignment %: any two politicians, or politician vs. their party's
@@ -342,41 +386,50 @@ people — see "Claim-preserving content model" above for the architecture
 this stage implements, and the legal-review recommendation before it
 ships publicly.
 
+This is where all four pipeline layers first run together end to end:
+collectors fetch, the aggregator normalizes into `NewsItem`/`SocialPost`,
+a processor extracts `Claim`s from that, and Stage 3/4's presenters render
+them.
+
 **Build:**
-- News: free-tier source — recommend RSS from known Utah news outlets +
-  GDELT (free, no rate-limit issues) over NewsAPI's free tier (restricted
-  to non-commercial/delayed use, poor fit for a public site).
-- Social: official oEmbed (X/Twitter, Facebook, Instagram support some
-  form) rather than scraping profiles directly — avoids ToS risk. Falls
-  back to a manually-curated link list per politician where no
-  embeddable/official option exists (case-by-case, per your "hybrid"
-  answer).
-- Every `NewsItem`/`SocialPost` stores `sourceUrl` + author + a content
-  hash (not a full-text mirror — see provenance-storage decision above),
-  linking back to the original.
-- Claim extraction: parse each item into zero or more `Claim` rows
-  (exact text, claimant, target, initial `verification_status` —
-  defaults to `UNVERIFIED_CLAIM`, or `SUPPORTED_BY_PRIMARY_SOURCE` when
-  it can be directly matched against Stage 2 vote/bill records).
-- Best-effort `target_response` matching: if the profiled politician has
-  their own post/statement addressing a claim, link it as the response
-  and set status to `CONTRADICTED` or `CORROBORATED` accordingly. This is
-  heuristic, not guaranteed-complete — a claim with no matched response
-  just stays `UNVERIFIED_CLAIM`, it doesn't imply the target didn't
-  respond somewhere.
+- Data collectors — news: free-tier source — recommend RSS from known
+  local news outlets for the pilot state + GDELT (free, no rate-limit
+  issues) over NewsAPI's free tier (restricted to non-commercial/delayed
+  use, poor fit for a public site).
+- Data collectors — social: official oEmbed (X/Twitter, Facebook,
+  Instagram support some form) rather than scraping profiles directly —
+  avoids ToS risk. Falls back to a manually-curated collector per
+  politician where no embeddable/official option exists (case-by-case,
+  per your "hybrid" answer).
+- Data aggregator: normalizes whatever the above collectors return into
+  `NewsItem`/`SocialPost` rows — `sourceUrl` + author + a content hash
+  (not a full-text mirror — see provenance-storage decision above),
+  linking back to the original — regardless of which collector or source
+  format it came from.
+- Data processor — claim extraction: parse each aggregated item into zero
+  or more `Claim` rows (exact text, claimant, target, initial
+  `verification_status` — defaults to `UNVERIFIED_CLAIM`, or
+  `SUPPORTED_BY_PRIMARY_SOURCE` when it can be directly matched against
+  Stage 2 vote/bill records).
+- Data processor — best-effort `target_response` matching: if the profiled
+  politician has their own post/statement addressing a claim, link it as
+  the response and set status to `CONTRADICTED` or `CORROBORATED`
+  accordingly. This is heuristic, not guaranteed-complete — a claim with
+  no matched response just stays `UNVERIFIED_CLAIM`, it doesn't imply the
+  target didn't respond somewhere.
 
 **Key decisions to confirm:**
 - Confirm RSS + GDELT over a paid news API given the free-tier budget
   constraint.
-- Which Utah outlets to pull RSS from — I'll propose a list (Salt Lake
-  Tribune, Deseret News, KSL, Utah News Dispatch, etc.) for you to approve
-  before wiring them in, since it shapes what coverage looks balanced.
+- Which local outlets to pull RSS from — I'll propose a list for you to
+  approve before wiring them in, since it shapes what coverage looks
+  balanced.
 - Confirm hash + excerpt + link over full-text storage (provenance
   decision above).
 
 **Verification:** profile pages show a live, reasonably fresh (< 1 week
-old) feed of real news/social items for a handful of high-profile Utah
-legislators, each rendered as an attributed claim with a visible
+old) feed of real news/social items for a handful of high-profile
+legislators in the pilot state, each rendered as an attributed claim with a visible
 `verification_status`, not as an unqualified statement; spot-check that
 the extraction pipeline hasn't upgraded any hedge language ("accused of",
 "alleged") into a bare assertion.
@@ -386,9 +439,10 @@ the extraction pipeline hasn't upgraded any hedge language ("accused of",
 ## Stage 6 — AI summaries + sitewide disclaimer
 
 **Build:**
-- AI-generated summaries of long bills/news clusters, built as the last
-  step of the claim-preserving pipeline (`Claim.generated_summary`), not
-  a standalone LLM-over-raw-text pass. The summary describes the
+- AI-generated summaries of long bills/news clusters — another data
+  processor module, built as the last step of the claim-preserving
+  pipeline (`Claim.generated_summary`), not a standalone LLM-over-raw-text
+  pass. The summary describes the
   *conversation* around a claim — who said what, whether it's disputed,
   what corroboration exists — rather than restating the claim as
   established fact. E.g. "Several posts alleged X; the claim originated
@@ -454,8 +508,8 @@ members of Congress.
 
 ## Open items not yet scheduled
 
-- Additional state adapters beyond Utah (explicitly optional per your
-  answer — "may expand... but may not").
+- Additional state adapters beyond the pilot state (explicitly optional
+  per your answer — "may expand... but may not").
 - Contributor docs for someone else standing up their own jurisdiction
   adapter (natural follow-up once 2 adapters exist and the interface has
   proven itself against real, different data shapes).

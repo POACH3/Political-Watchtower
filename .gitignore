@@ -41,5 +41,8 @@ Thumbs.db
 .idea/
 *.swp
 
-# claude code — local-only overrides, not shared with the repo
+# claude code
+# local-only overrides, not shared with the repo
 .claude/settings.local.json
+# local-only guardrail, imported by CLAUDE.md, never committed
+CLAUDE.local.md

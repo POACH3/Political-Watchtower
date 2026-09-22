@@ -1,3 +1,5 @@
+@CLAUDE.local.md
+
 ## Verification of Work
 
 Before starting any multi-step build, always include a verification plan as part of the plan itself — don't wait for me to ask for one.
@@ -12,6 +14,9 @@ Pre-code stage — no app scaffold yet. What exists today:
 - `CLAUDE.md` — this file.
 - `.claude/` — settings, permissions, and `hooks/git-safety-guard.mjs`
   (the PreToolUse hook backing the "Never do" rules below).
+- `CLAUDE.local.md` — gitignored, local-only guardrail (imported into
+  this file) explaining why jurisdiction-identifying details are kept out
+  of committed docs.
 
 This section gets filled in with the real app layout once Stage 0
 scaffolding (Next.js app, Docker Compose, CI) lands — see SPEC.md.
