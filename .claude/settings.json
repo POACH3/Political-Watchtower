@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(npm install*)",
+      "Bash(npm i *)",
+      "Bash(npm audit fix*)",
+      "Bash(npx *)",
+      "Bash(pip install*)",
+      "Bash(pip3 install*)",
+      "Bash(brew install*)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(git commit*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/git-safety-guard.mjs",
+            "if": "Bash(git *)",
+            "timeout": 10,
+            "statusMessage": "Checking git safety guardrails..."
+          }
+        ]
+      }
+    ]
+  }
+}
