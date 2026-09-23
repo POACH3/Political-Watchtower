@@ -7,6 +7,28 @@ on:
 jobs:
   lint-typecheck-test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: political_watchtower
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # No 5432/5433 port-conflict concern here — GitHub-hosted runners
+      # don't have a pre-existing Postgres, unlike local dev (see
+      # docker-compose.yml and .env.example for why local dev uses 5433).
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/political_watchtower
+
     steps:
       - uses: actions/checkout@v4
 
@@ -18,4 +40,5 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm run db:migrate
       - run: npm run test

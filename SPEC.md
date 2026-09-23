@@ -1830,10 +1830,26 @@ finding about Stage 1's interface design, not just a Stage 15 bug.
 
 ## Next step
 
-Stage 0 is partway done: `CLAUDE.md` is rewritten, `README.md` exists, and
-the git-safety hook (`.claude/hooks/git-safety-guard.mjs`) is live and
-tested. Still open in Stage 0: the actual app scaffold and CI. Stage 1 is
-next — its two [DECISION TO CONFIRM] items (Stage 4's auth mechanism and
-runtime collector toggle) are actually Stage 4 decisions, not Stage 1
-ones; Stage 1 itself has only the issue-area taxonomy call to confirm
-before it starts.
+Stage 0 and Stage 1 are both done and verified end-to-end (schema
+generated, migrated against real Postgres, constraints tested — the
+provenance `NOT NULL`, the `Term` exclusion constraint, and
+`PoliticianExternalId`'s uniqueness all confirmed to actually reject bad
+data, not just documented as if they do).
+
+**Left open from Stage 1, not blocking Stage 2:** the issue-area taxonomy
+[DECISION TO CONFIRM] — the `issue_areas` table exists but is unseeded;
+no fixed list has actually been chosen yet. Needs an answer before Stage
+6 (radar chart) or Stage 9 (ML tagging upgrade) can use it, but doesn't
+block Stage 2's schema work.
+
+**Also not yet built, worth naming so it isn't assumed to exist:** Stage
+1's service layer covers `collected_items`, `jurisdictions`/`chambers`,
+and `politicians` — enough to support Stage 1's own tests — but not
+`bills`/`votes`/`terms`/etc. yet. Stage 3 will need those before it can
+actually ingest anything.
+
+Stage 2 (narrative & oversight schema) is next — its own
+[DECISION TO CONFIRM] items (Stage 4's auth mechanism and runtime
+collector toggle) are actually Stage 4 decisions surfaced early, not
+Stage 2 ones; Stage 2 itself has no open decisions blocking it from
+starting.

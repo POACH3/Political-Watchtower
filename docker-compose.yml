@@ -28,7 +28,13 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: political_watchtower
     ports:
-      - "5432:5432"
+      # Host-side port only — 5432 is the single most likely port to
+      # already be taken by a locally-installed Postgres (it was, on the
+      # machine this was written on). The app container talks to this
+      # service over the internal Docker network as "db:5432" regardless
+      # of this mapping; 5433 only matters for host tools (psql, a GUI
+      # client, this repo's own migration scripts run outside Docker).
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
