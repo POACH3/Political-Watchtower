@@ -101,17 +101,23 @@ re-litigating per stage:
    specifics of any one source/processor/view — that's what makes "point
    it at your own state" and "add/remove a comparison view" both realistic
    for other adopters, per your build-to-be-forked goal.
-5. **Presenters call service functions, never the database directly.**
-   Next.js makes it easy for page/component code to query Postgres inline
-   (e.g. straight from a Server Component) — convenient short-term, but it
-   quietly turns the UI layer into the only place an API contract would
-   exist, which makes extracting a separate backend later an exercise in
-   reverse-engineering one rather than just moving files. Costs nothing to
-   avoid now: all data access from presenter code goes through named
-   service functions (e.g. `getPoliticianProfile(id)`,
-   `getVotingAlignment(a, b)`) defined alongside the processor/aggregator
-   layer, not inline queries in page/component code. Starting in Stage 5
-   (first real pages), not something to retrofit later.
+5. **Every module — presenters, collectors, and processors alike — calls
+   shared service functions, never the database directly.** Originally
+   scoped to presenters only (Next.js makes it easy to query Postgres
+   inline from a Server Component, which quietly turns the UI layer into
+   the only place an API contract exists); broadened to cover the worker
+   service too once it became clear the same risk applies there — two
+   separate processes each independently reimplementing "how to safely
+   write a `Claim`" (lock checks, suppression rules, the "exactly one
+   primary source" invariant) is the same kind of drift risk regardless
+   of whether the two implementations are in different languages or just
+   different processes. All data access — `getPoliticianProfile(id)`,
+   `createClaim(...)`, `setVerificationStatus(...)`, etc. — goes through
+   one shared package of named functions, never inline queries anywhere.
+   Starting in Stage 5 for presenters (first real pages) and Stage 3 for
+   collectors/the worker service, not something to retrofit later. See
+   decision #8 for how this same service layer stays reachable if a
+   future module isn't TypeScript.
 6. **Collectors run in a dedicated worker service, not the web app
    process.** Scheduled API polling and the long-running news/social
    crawler both live in their own Docker Compose service, separate from
@@ -127,6 +133,41 @@ re-litigating per stage:
    collector architecture" below for why this matters beyond flexibility
    for its own sake (jurisdictions without a usable API; operators who
    don't want the crawler's cost/legal surface).
+8. **Everything is TypeScript by default; a future non-TypeScript module
+   is an option kept open, not something built now.** Considered running
+   some processors in Python (its NLP/ML ecosystem is genuinely stronger
+   for entity-resolution upgrades, semantic similarity, and sentiment
+   analysis specifically) and decided against committing to it — for the
+   collectors and processors actually scoped so far, TypeScript is as
+   good or better (crawling, LLM-orchestrated claim extraction/
+   summarization) or the gap is small enough not to justify a second
+   runtime, a second dependency ecosystem, and a fourth Docker Compose
+   service. Only issue-area ML tagging, entity resolution, near-duplicate/
+   statement-similarity matching, and sentiment analysis are plausible
+   future Python candidates — and even those work fine in TypeScript at
+   this project's actual scale (one state legislature, modest volume);
+   Python would only be worth it if one of them genuinely needs the
+   upgrade in practice, judged then, not designed around now. Claim
+   extraction and `verification_status`/`SuppressionRule` enforcement
+   specifically should stay TypeScript regardless — that's the
+   safety-critical core, and splitting it across languages means the same
+   rule (e.g. the prompt-injection defense) has to be gotten right twice
+   instead of once.
+
+   What decision #5's service layer buys, concretely: because every
+   module already goes through shared service functions instead of raw
+   queries, staying flexible costs nothing today. A same-runtime
+   (TypeScript) module calls those functions directly, in-process — no
+   network hop, no availability coupling to another process being up. If
+   a non-TypeScript module is ever actually added, it can't import that
+   package, so it needs a thin HTTP API wrapping those same functions —
+   built only at that point, not speculatively now. That module's only
+   path to the data would then be that API, meaning it depends on the
+   TypeScript app being up to do anything — an acceptable tradeoff here
+   specifically because collector/processor work is async and batched
+   (a brief delay during a redeploy costs nothing) and a self-hosted
+   `docker compose` deployment typically restarts its whole stack
+   together anyway, not piecemeal.
 
 ---
 
@@ -1199,6 +1240,87 @@ independent schema review found:
 
 ---
 
+## Testing strategy
+
+How the checks above actually get run, organized by tooling rather than
+by stage since that's what maps to CI. Every category ties back to a
+specific line in "Validation & acceptance criteria" above.
+
+**Unit tests** (Vitest, no external dependencies) — pure functions:
+`CollectedItem`-to-entity parsers, service functions (decision #5),
+enum/status transitions, `raw_status`/`raw_value`-to-normalized-enum
+mapping. Fast; every commit.
+
+**Integration tests** (Vitest against a real ephemeral test Postgres —
+`testcontainers` or a `docker-compose.test.yml`) — where most of
+"Validation & acceptance criteria" is actually exercised:
+- *Data integrity & idempotency*: run a collector job twice against
+  fixture data, assert zero new rows; a reused bill number across two
+  `LegislativeSession`s produces two distinct `Bill` rows.
+- *Provenance completeness*: attempt an insert with a null `source_item`
+  or zero `ClaimSource` rows, assert the DB rejects it — this suite fails
+  loudly if a constraint gets weakened later, not just documents that it
+  shouldn't happen.
+- *Pipeline-layer boundary*: attempt to write a `[processor: X]`-tagged
+  field from aggregator code, assert it's rejected. Only has real teeth
+  once cross-cutting decision #20's open question (DB grants vs.
+  service-layer-only vs. code-review convention) is actually resolved —
+  until then this can only assert the service-layer function signatures
+  don't expose the field, which is weaker than a DB-level guarantee.
+
+**Adversarial regression suite** (its own runner — versioned fixtures,
+possibly real LLM calls, not folded into general unit tests) — the
+highest-priority suite given the project's core risk:
+- A maintained corpus of hedge-language inputs
+  (`tests/adversarial/claim-extraction/*.json`: input text + expected
+  non-assertion output pattern) run against claim extraction, checked for
+  any upgrade from hedged to bare assertion.
+- A corpus of prompt-injection payloads, asserting `verification_status`
+  is unaffected by injected instructions.
+- Lock-enforcement: set a status by hand, re-run the processor, assert it
+  holds.
+- Suppression: suppress a claim, feed in a syndicated re-crawl fixture,
+  assert `SuppressionRule` catches it before a new `Claim` is written.
+
+This corpus needs a human-reviewed "golden set" — someone has to decide
+what correct non-assertive output looks like for each fixture, which
+makes this suite partly a content-review artifact, not purely code.
+
+**End-to-end tests** (Playwright, against the full stack — app +
+Postgres + worker in Docker Compose): view a profile page, admin logs in
+and triggers a `CollectorJob`, submits a manual upload, watches it land
+in Postgres via the aggregator. Slower — nightly, or pre-merge only for
+stages that touch these flows.
+
+**Fork-ability test fixture:** a minimal *second* `JurisdictionAdapter`
+that exists purely as a test fixture — synthetic data, not the real
+Stage 15 Congress adapter — used to mechanically prove the interface
+doesn't leak assumptions from the pilot state. Run as an integration
+test; if it ever needs changes outside its own module, that's an
+interface bug caught early rather than discovered during Stage 15 itself.
+
+**Static analysis / lint rules** (ESLint, part of Stage 0's CI):
+- Ban raw ORM/query-builder calls outside the service layer (decision
+  #5).
+- Flag writes to `[processor: X]`-tagged fields from outside that
+  processor's module, where feasible as a lint rule rather than a
+  runtime check.
+
+**Manual checklists — explicitly not automated**, tracked as a checklist
+artifact (PR template or a `CHECKLIST.md`), not CI:
+- Stage 11's legal sign-off.
+- Spot-checking 10+ AI summaries against source claims before a release.
+- Rate-limit compliance — inspecting a real polling run's request log
+  against the target API's documented limits, since this needs a live
+  run against the real external API, not a mock.
+
+**CI wiring:** unit + integration + lint on every PR; E2E and the
+adversarial corpus on every PR touching Stage 8-12 code (nightly
+otherwise, to keep PR feedback fast); the fork-ability fixture test joins
+the integration suite once Stage 1's interfaces exist.
+
+---
+
 ## Staging notes
 
 Everything below is a full replan, not a renumbering — the original
@@ -1266,6 +1388,13 @@ placeholder homepage, CI passes on an empty test suite. No real data yet.
   pipeline"), plus a stub/mock `JurisdictionAdapter` with fake data so
   Stage 3+ has something concrete to implement against and Stage 5's UI
   can be built in parallel against mock data.
+- The shared service-layer package itself (decision #5) — plain,
+  JSON-serializable function signatures, not framework-specific types
+  (no Next.js `Request`/React-specific objects in or out). Costs nothing
+  now and is what keeps decision #8's option open cheaply: a function
+  that already takes/returns plain data is trivial to wrap in an API
+  route later if a non-TypeScript module ever needs one; a function
+  built around framework internals isn't.
 
 **Key decisions to confirm:**
 - Issue-area taxonomy: fixed list (~10-15 areas) vs. free-form tags —
