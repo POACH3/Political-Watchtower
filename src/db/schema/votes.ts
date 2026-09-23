@@ -4,7 +4,7 @@ import { date, integer, pgEnum, pgTable, text, unique, uuid } from "drizzle-orm/
 import { idColumn, timestampColumns } from "./_shared";
 import { collectedItems } from "./collected-items";
 import { bills } from "./legislation";
-import { chambers, jurisdictions, legislativeSessions } from "./jurisdictions";
+import { chambers, legislativeSessions } from "./jurisdictions";
 import { politicians } from "./people";
 
 export const voteResultEnum = pgEnum("vote_result", ["passed", "failed"]);
@@ -14,9 +14,13 @@ export const votes = pgTable(
   "votes",
   {
     ...idColumn,
-    jurisdictionId: uuid("jurisdiction_id")
-      .notNull()
-      .references(() => jurisdictions.id),
+    // No jurisdictionId — sessionId (and chamberId) already imply it,
+    // same redundancy fix as Term/District. The original design used
+    // UNIQUE (jurisdiction_id, external_vote_id) as the dedup key;
+    // UNIQUE (session_id, external_vote_id) is the same guarantee
+    // without the redundant column, and it's the same shape Bill
+    // already uses for external_bill_id — one consistent pattern
+    // instead of two.
     chamberId: uuid("chamber_id")
       .notNull()
       .references(() => chambers.id),
@@ -39,17 +43,27 @@ export const votes = pgTable(
     // multiple votes on the same bill at the same stage.
     description: text("description"),
     voteDate: date("vote_date").notNull(),
-    voteStage: text("vote_stage").notNull(),
+    // Nullable — descriptive, not identifying; only externalVoteId/
+    // sessionId/chamberId are required to dedupe and place this row.
+    voteStage: text("vote_stage"),
     result: voteResultEnum("result").notNull(),
-    yeaCount: integer("yea_count").notNull(),
-    nayCount: integer("nay_count").notNull(),
-    otherCount: integer("other_count").notNull(),
+    // Nullable, and now paired with a raw passthrough (below) — the
+    // 2-value enum can't express "tied" / "no quorum" / "withdrawn",
+    // which real jurisdictions report.
+    yeaCount: integer("yea_count"),
+    nayCount: integer("nay_count"),
+    otherCount: integer("other_count"),
+    // The jurisdiction's own outcome string, unnormalized — same
+    // raw_status/raw_value pattern as Bill/VoteRecord, missing here
+    // originally even though `result` has exactly the same normalization
+    // problem those two fields exist to solve.
+    rawResult: text("raw_result"),
     sourceItem: uuid("source_item")
       .notNull()
       .references(() => collectedItems.id),
     ...timestampColumns,
   },
-  (table) => [unique().on(table.jurisdictionId, table.externalVoteId)],
+  (table) => [unique().on(table.sessionId, table.externalVoteId)],
 );
 
 export const voteValueEnum = pgEnum("vote_value", ["yea", "nay", "present", "absent", "excused"]);
@@ -66,8 +80,11 @@ export const voteRecords = pgTable(
       .notNull()
       .references(() => politicians.id),
     value: voteValueEnum("value").notNull(),
-    // The jurisdiction's own value string, unnormalized.
-    rawValue: text("raw_value").notNull(),
+    // Nullable — the jurisdiction's own value string, unnormalized. Kept
+    // required-in-spirit (every real vote record has one) but not
+    // NOT NULL, since `value` itself is the field that actually has to
+    // be known for this row to mean anything.
+    rawValue: text("raw_value"),
     sourceItem: uuid("source_item")
       .notNull()
       .references(() => collectedItems.id),

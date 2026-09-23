@@ -11,5 +11,18 @@ export const idColumn = {
 
 export const timestampColumns = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // Kept current by a BEFORE UPDATE trigger (migrations/0002_updated_at_trigger.sql),
+  // not application code — a trigger, unlike Drizzle's own $onUpdate,
+  // also covers any raw-SQL write path, not just ones that go through
+  // this ORM. defaultNow() here only sets the *initial* value.
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+};
+
+// For append-only audit tables (ReviewAction, SuppressionRule) — no
+// updatedAt/trigger on these deliberately: an "edited" timestamp on a
+// row that exists specifically to record an immutable past action would
+// invite the kind of after-the-fact edit an audit trail exists to rule
+// out.
+export const createdAtColumn = {
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 };

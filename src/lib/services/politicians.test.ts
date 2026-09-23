@@ -16,7 +16,7 @@ async function makeSourceItem(): Promise<string> {
     submittedBy: "test",
     contentHash: randomUUID(),
     contentType: "application/json",
-    rawPayload: {},
+    rawPayload: "{}",
   });
 }
 
@@ -91,6 +91,45 @@ describe("Stage 1 — upsertPoliticianByExternalId", () => {
 
     const profile = await getPoliticianProfile(id);
     expect(profile?.fullName).toBe("Real Name");
+  });
+});
+
+// Kept current by a BEFORE UPDATE trigger (migrations/0002_updated_at_trigger.sql),
+// not application code — see src/db/schema/_shared.ts. Politician is just
+// one of the 31 tables the trigger is attached to; this proves the
+// mechanism itself works rather than re-testing it per table.
+describe("Stage 1 — updated_at trigger", () => {
+  it("bumps updated_at on UPDATE, independent of application code", async () => {
+    const sourceItem = await makeSourceItem();
+    const jurisdictionId = await upsertJurisdiction({
+      slug: `test-updated-at-${randomUUID()}`,
+      name: "Test Jurisdiction",
+      level: "state",
+    });
+    const id = await upsertPoliticianByExternalId({
+      jurisdictionId,
+      externalId: randomUUID(),
+      sourceItem,
+      fullName: "Before Update",
+    });
+
+    const [before] = await db
+      .select({ updatedAt: politicians.updatedAt })
+      .from(politicians)
+      .where(sql`${politicians.id} = ${id}`);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // A raw SQL UPDATE, not a Drizzle .$onUpdate() write — proves the
+    // trigger fires regardless of write path, not just ORM writes.
+    await db.execute(sql`UPDATE politicians SET full_name = 'After Update' WHERE id = ${id}`);
+
+    const [after] = await db
+      .select({ updatedAt: politicians.updatedAt })
+      .from(politicians)
+      .where(sql`${politicians.id} = ${id}`);
+
+    expect(after.updatedAt.getTime()).toBeGreaterThan(before.updatedAt.getTime());
   });
 });
 

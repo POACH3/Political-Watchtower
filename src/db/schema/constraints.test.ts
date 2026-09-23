@@ -15,7 +15,7 @@ async function makeSourceItem(): Promise<string> {
     submittedBy: "test",
     contentHash: randomUUID(),
     contentType: "application/json",
-    rawPayload: {},
+    rawPayload: "{}",
   });
 }
 
@@ -49,7 +49,6 @@ describe("Term — no-overlap exclusion constraint", () => {
     const [district] = await db
       .insert(districts)
       .values({
-        jurisdictionId,
         chamberId,
         externalDistrictId: "D1",
         validFrom: "2020-01-01",
@@ -61,7 +60,6 @@ describe("Term — no-overlap exclusion constraint", () => {
   it("rejects a second open-ended term for the same politician+chamber that starts before the first one ends", async () => {
     await db.insert(terms).values({
       politicianId,
-      jurisdictionId,
       chamberId,
       districtId,
       party: "Independent",
@@ -73,7 +71,6 @@ describe("Term — no-overlap exclusion constraint", () => {
       .insert(terms)
       .values({
         politicianId,
-        jurisdictionId,
         chamberId,
         districtId,
         party: "Independent",
@@ -97,7 +94,6 @@ describe("Term — no-overlap exclusion constraint", () => {
 
     await db.insert(terms).values({
       politicianId: politician2,
-      jurisdictionId,
       chamberId,
       districtId,
       party: "Independent",
@@ -109,7 +105,6 @@ describe("Term — no-overlap exclusion constraint", () => {
     await expect(
       db.insert(terms).values({
         politicianId: politician2,
-        jurisdictionId,
         chamberId,
         districtId,
         party: "Independent",

@@ -54,8 +54,8 @@ function checkForceOperations(args) {
   if (sub === "branch" && (args.includes("-D") || (args.includes("--delete") && args.includes("--force")))) {
     return "Blocked: force branch delete is disabled. Ask the user first.";
   }
-  if (sub === "commit" && (args.includes("--no-verify") || args.includes("--no-gpg-sign") || args.includes("-n"))) {
-    return "Blocked: `git commit --no-verify`/`--no-gpg-sign` is disabled — hooks and signing must not be skipped.";
+  if (sub === "commit") {
+    return "Blocked: `git commit` is disabled in this repo — the user commits their own work. Never run it, even if asked; tell the user what's ready to commit and let them run it themselves.";
   }
   return null;
 }

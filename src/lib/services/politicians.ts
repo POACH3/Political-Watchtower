@@ -40,9 +40,12 @@ export async function upsertPoliticianByExternalId(
   if (existing[0]) {
     const isPlaceholder = existing[0].fullName === placeholderName(input.externalId);
     if (input.fullName && isPlaceholder) {
+      // No manual updatedAt here — a BEFORE UPDATE trigger keeps it
+      // current for every write path, not just ones that remember to
+      // set it themselves (see _shared.ts).
       await db
         .update(politicians)
-        .set({ fullName: input.fullName, updatedAt: new Date() })
+        .set({ fullName: input.fullName })
         .where(eq(politicians.id, existing[0].politicianId));
     }
     return existing[0].politicianId;

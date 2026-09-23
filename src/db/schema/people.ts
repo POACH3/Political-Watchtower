@@ -69,32 +69,43 @@ export const politicianAliases = pgTable(
   (table) => [unique().on(table.politicianId, table.aliasText, table.aliasType)],
 );
 
-export const terms = pgTable("terms", {
-  ...idColumn,
-  politicianId: uuid("politician_id")
-    .notNull()
-    .references(() => politicians.id),
-  jurisdictionId: uuid("jurisdiction_id")
-    .notNull()
-    .references((): AnyPgColumn => jurisdictions.id),
-  chamberId: uuid("chamber_id")
-    .notNull()
-    .references((): AnyPgColumn => chambers.id),
-  districtId: uuid("district_id")
-    .notNull()
-    .references((): AnyPgColumn => districts.id),
-  // The race that put this person in this seat, if tracked.
-  candidacyId: uuid("candidacy_id").references((): AnyPgColumn => candidacies.id),
-  party: text("party").notNull(),
-  startDate: date("start_date").notNull(),
-  // Nullable; null = currently serving. "Current party" is derived from
-  // the most recent Term with a null endDate, not stored redundantly.
-  endDate: date("end_date"),
-  sourceItem: uuid("source_item")
-    .notNull()
-    .references(() => collectedItems.id),
-  ...timestampColumns,
-});
+export const terms = pgTable(
+  "terms",
+  {
+    ...idColumn,
+    politicianId: uuid("politician_id")
+      .notNull()
+      .references(() => politicians.id),
+    // No jurisdictionId here — chamberId already implies it (chambers is
+    // itself scoped to one jurisdiction), and districtId implies it a
+    // second time over. A redundant copy on this row was a real risk,
+    // not just untidy: nothing checked it agreed with chamberId's own
+    // jurisdiction, so a bad write here could silently point a term at
+    // the wrong jurisdiction's roster.
+    chamberId: uuid("chamber_id")
+      .notNull()
+      .references((): AnyPgColumn => chambers.id),
+    districtId: uuid("district_id")
+      .notNull()
+      .references((): AnyPgColumn => districts.id),
+    // The race that put this person in this seat, if tracked.
+    candidacyId: uuid("candidacy_id").references((): AnyPgColumn => candidacies.id),
+    // Nullable — per the "only provenance + the one identifying field are
+    // required" principle: a term is still real and worth recording even
+    // before we know (or for a nonpartisan legislature, ever know) the
+    // party. Shown when known, never required to create the row.
+    party: text("party"),
+    startDate: date("start_date").notNull(),
+    // Nullable; null = currently serving. "Current party" is derived from
+    // the most recent Term with a null endDate, not stored redundantly.
+    endDate: date("end_date"),
+    sourceItem: uuid("source_item")
+      .notNull()
+      .references(() => collectedItems.id),
+    ...timestampColumns,
+  },
+  (table) => [unique().on(table.politicianId, table.chamberId, table.startDate)],
+);
 // No two Term rows for the same politicianId + chamberId should have
 // overlapping [startDate, endDate) ranges — added as a real Postgres
 // EXCLUDE constraint in a hand-written migration (Drizzle has no native

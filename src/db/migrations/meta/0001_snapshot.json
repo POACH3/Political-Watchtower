@@ -1,6 +1,6 @@
 {
-  "id": "2f6b53b1-48b8-41af-8951-d3f0bb1c290e",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "187b103a-a6a7-469f-82e2-b55a3662e914",
+  "prevId": "2f6b53b1-48b8-41af-8951-d3f0bb1c290e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1791,6 +1791,1662 @@
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
+    },
+    "public.news_item_politicians": {
+      "name": "news_item_politicians",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "news_item_id": {
+          "name": "news_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "politician_id": {
+          "name": "politician_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "mention_confidence",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "locked": {
+          "name": "locked",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "news_item_politicians_news_item_id_news_items_id_fk": {
+          "name": "news_item_politicians_news_item_id_news_items_id_fk",
+          "tableFrom": "news_item_politicians",
+          "tableTo": "news_items",
+          "columnsFrom": [
+            "news_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "news_item_politicians_politician_id_politicians_id_fk": {
+          "name": "news_item_politicians_politician_id_politicians_id_fk",
+          "tableFrom": "news_item_politicians",
+          "tableTo": "politicians",
+          "columnsFrom": [
+            "politician_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "news_item_politicians_news_item_id_politician_id_unique": {
+          "name": "news_item_politicians_news_item_id_politician_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "news_item_id",
+            "politician_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.news_item_relations": {
+      "name": "news_item_relations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "news_item_a_id": {
+          "name": "news_item_a_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "news_item_b_id": {
+          "name": "news_item_b_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "relation_type": {
+          "name": "relation_type",
+          "type": "news_item_relation_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "news_item_relations_news_item_a_id_news_items_id_fk": {
+          "name": "news_item_relations_news_item_a_id_news_items_id_fk",
+          "tableFrom": "news_item_relations",
+          "tableTo": "news_items",
+          "columnsFrom": [
+            "news_item_a_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "news_item_relations_news_item_b_id_news_items_id_fk": {
+          "name": "news_item_relations_news_item_b_id_news_items_id_fk",
+          "tableFrom": "news_item_relations",
+          "tableTo": "news_items",
+          "columnsFrom": [
+            "news_item_b_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "news_item_relations_news_item_a_id_news_item_b_id_relation_type_unique": {
+          "name": "news_item_relations_news_item_a_id_news_item_b_id_relation_type_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "news_item_a_id",
+            "news_item_b_id",
+            "relation_type"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "news_item_relations_canonical_order": {
+          "name": "news_item_relations_canonical_order",
+          "value": "\"news_item_relations\".\"news_item_a_id\" < \"news_item_relations\".\"news_item_b_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.news_item_sources": {
+      "name": "news_item_sources",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "news_item_id": {
+          "name": "news_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_item_id": {
+          "name": "source_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "news_item_sources_news_item_id_news_items_id_fk": {
+          "name": "news_item_sources_news_item_id_news_items_id_fk",
+          "tableFrom": "news_item_sources",
+          "tableTo": "news_items",
+          "columnsFrom": [
+            "news_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "news_item_sources_source_item_id_collected_items_id_fk": {
+          "name": "news_item_sources_source_item_id_collected_items_id_fk",
+          "tableFrom": "news_item_sources",
+          "tableTo": "collected_items",
+          "columnsFrom": [
+            "source_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "news_item_sources_news_item_id_source_item_id_unique": {
+          "name": "news_item_sources_news_item_id_source_item_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "news_item_id",
+            "source_item_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.news_items": {
+      "name": "news_items",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "platform": {
+          "name": "platform",
+          "type": "platform",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "canonical_url": {
+          "name": "canonical_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author_name": {
+          "name": "author_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "author_handle": {
+          "name": "author_handle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "headline_or_text": {
+          "name": "headline_or_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "excerpt": {
+          "name": "excerpt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_suppressed": {
+          "name": "is_suppressed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "suppressed_at": {
+          "name": "suppressed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "suppression_reason": {
+          "name": "suppression_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.claim_relations": {
+      "name": "claim_relations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "claim_a_id": {
+          "name": "claim_a_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claim_b_id": {
+          "name": "claim_b_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "relation_type": {
+          "name": "relation_type",
+          "type": "claim_relation_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "claim_relations_claim_a_id_claims_id_fk": {
+          "name": "claim_relations_claim_a_id_claims_id_fk",
+          "tableFrom": "claim_relations",
+          "tableTo": "claims",
+          "columnsFrom": [
+            "claim_a_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "claim_relations_claim_b_id_claims_id_fk": {
+          "name": "claim_relations_claim_b_id_claims_id_fk",
+          "tableFrom": "claim_relations",
+          "tableTo": "claims",
+          "columnsFrom": [
+            "claim_b_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "claim_relations_claim_a_id_claim_b_id_relation_type_unique": {
+          "name": "claim_relations_claim_a_id_claim_b_id_relation_type_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "claim_a_id",
+            "claim_b_id",
+            "relation_type"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "claim_relations_canonical_order": {
+          "name": "claim_relations_canonical_order",
+          "value": "\"claim_relations\".\"claim_a_id\" < \"claim_relations\".\"claim_b_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.claim_responses": {
+      "name": "claim_responses",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "claim_id": {
+          "name": "claim_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response_news_item_id": {
+          "name": "response_news_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "response_claim_id": {
+          "name": "response_claim_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "stance": {
+          "name": "stance",
+          "type": "claim_response_stance",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "claim_responses_claim_id_claims_id_fk": {
+          "name": "claim_responses_claim_id_claims_id_fk",
+          "tableFrom": "claim_responses",
+          "tableTo": "claims",
+          "columnsFrom": [
+            "claim_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "claim_responses_response_news_item_id_news_items_id_fk": {
+          "name": "claim_responses_response_news_item_id_news_items_id_fk",
+          "tableFrom": "claim_responses",
+          "tableTo": "news_items",
+          "columnsFrom": [
+            "response_news_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "claim_responses_response_claim_id_claims_id_fk": {
+          "name": "claim_responses_response_claim_id_claims_id_fk",
+          "tableFrom": "claim_responses",
+          "tableTo": "claims",
+          "columnsFrom": [
+            "response_claim_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "claim_responses_claim_id_response_news_item_id_response_claim_id_unique": {
+          "name": "claim_responses_claim_id_response_news_item_id_response_claim_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "claim_id",
+            "response_news_item_id",
+            "response_claim_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "claim_responses_exactly_one_target": {
+          "name": "claim_responses_exactly_one_target",
+          "value": "num_nonnulls(\"claim_responses\".\"response_news_item_id\", \"claim_responses\".\"response_claim_id\") = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.claim_sources": {
+      "name": "claim_sources",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "claim_id": {
+          "name": "claim_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_item_id": {
+          "name": "source_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "relation": {
+          "name": "relation",
+          "type": "claim_source_relation",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "claim_sources_one_primary_idx": {
+          "name": "claim_sources_one_primary_idx",
+          "columns": [
+            {
+              "expression": "claim_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"claim_sources\".\"relation\" = 'primary'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "claim_sources_claim_id_claims_id_fk": {
+          "name": "claim_sources_claim_id_claims_id_fk",
+          "tableFrom": "claim_sources",
+          "tableTo": "claims",
+          "columnsFrom": [
+            "claim_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "claim_sources_source_item_id_collected_items_id_fk": {
+          "name": "claim_sources_source_item_id_collected_items_id_fk",
+          "tableFrom": "claim_sources",
+          "tableTo": "collected_items",
+          "columnsFrom": [
+            "source_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "claim_sources_claim_id_source_item_id_unique": {
+          "name": "claim_sources_claim_id_source_item_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "claim_id",
+            "source_item_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.claim_targets": {
+      "name": "claim_targets",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "claim_id": {
+          "name": "claim_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "politician_id": {
+          "name": "politician_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "target_confidence",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "claim_targets_claim_id_claims_id_fk": {
+          "name": "claim_targets_claim_id_claims_id_fk",
+          "tableFrom": "claim_targets",
+          "tableTo": "claims",
+          "columnsFrom": [
+            "claim_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "claim_targets_politician_id_politicians_id_fk": {
+          "name": "claim_targets_politician_id_politicians_id_fk",
+          "tableFrom": "claim_targets",
+          "tableTo": "politicians",
+          "columnsFrom": [
+            "politician_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "claim_targets_claim_id_politician_id_unique": {
+          "name": "claim_targets_claim_id_politician_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "claim_id",
+            "politician_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.claims": {
+      "name": "claims",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "news_item_id": {
+          "name": "news_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "exact_text": {
+          "name": "exact_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "normalized_claim": {
+          "name": "normalized_claim",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claimant_text": {
+          "name": "claimant_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claimant_politician_id": {
+          "name": "claimant_politician_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "publication_timestamp": {
+          "name": "publication_timestamp",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "retrieved_timestamp": {
+          "name": "retrieved_timestamp",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "verification_status": {
+          "name": "verification_status",
+          "type": "verification_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'UNVERIFIED_CLAIM'"
+        },
+        "verification_set_by": {
+          "name": "verification_set_by",
+          "type": "verification_set_by",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'processor'"
+        },
+        "verification_set_at": {
+          "name": "verification_set_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "verification_locked": {
+          "name": "verification_locked",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "is_suppressed": {
+          "name": "is_suppressed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "suppressed_at": {
+          "name": "suppressed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "suppression_reason": {
+          "name": "suppression_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "model_version": {
+          "name": "model_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "generated_summary": {
+          "name": "generated_summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "claims_news_item_id_news_items_id_fk": {
+          "name": "claims_news_item_id_news_items_id_fk",
+          "tableFrom": "claims",
+          "tableTo": "news_items",
+          "columnsFrom": [
+            "news_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "claims_claimant_politician_id_politicians_id_fk": {
+          "name": "claims_claimant_politician_id_politicians_id_fk",
+          "tableFrom": "claims",
+          "tableTo": "politicians",
+          "columnsFrom": [
+            "claimant_politician_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.politician_priority_issues": {
+      "name": "politician_priority_issues",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "politician_id": {
+          "name": "politician_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issue_area_id": {
+          "name": "issue_area_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_item": {
+          "name": "source_item",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_order": {
+          "name": "display_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "politician_priority_issues_politician_id_politicians_id_fk": {
+          "name": "politician_priority_issues_politician_id_politicians_id_fk",
+          "tableFrom": "politician_priority_issues",
+          "tableTo": "politicians",
+          "columnsFrom": [
+            "politician_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "politician_priority_issues_issue_area_id_issue_areas_id_fk": {
+          "name": "politician_priority_issues_issue_area_id_issue_areas_id_fk",
+          "tableFrom": "politician_priority_issues",
+          "tableTo": "issue_areas",
+          "columnsFrom": [
+            "issue_area_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "politician_priority_issues_source_item_collected_items_id_fk": {
+          "name": "politician_priority_issues_source_item_collected_items_id_fk",
+          "tableFrom": "politician_priority_issues",
+          "tableTo": "collected_items",
+          "columnsFrom": [
+            "source_item"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "politician_priority_issues_politician_id_issue_area_id_unique": {
+          "name": "politician_priority_issues_politician_id_issue_area_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "politician_id",
+            "issue_area_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.promise_evidence": {
+      "name": "promise_evidence",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "promise_id": {
+          "name": "promise_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bill_id": {
+          "name": "bill_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vote_id": {
+          "name": "vote_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "news_item_id": {
+          "name": "news_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claim_id": {
+          "name": "claim_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "supports": {
+          "name": "supports",
+          "type": "promise_evidence_supports",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "promise_evidence_promise_id_promises_id_fk": {
+          "name": "promise_evidence_promise_id_promises_id_fk",
+          "tableFrom": "promise_evidence",
+          "tableTo": "promises",
+          "columnsFrom": [
+            "promise_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "promise_evidence_bill_id_bills_id_fk": {
+          "name": "promise_evidence_bill_id_bills_id_fk",
+          "tableFrom": "promise_evidence",
+          "tableTo": "bills",
+          "columnsFrom": [
+            "bill_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "promise_evidence_vote_id_votes_id_fk": {
+          "name": "promise_evidence_vote_id_votes_id_fk",
+          "tableFrom": "promise_evidence",
+          "tableTo": "votes",
+          "columnsFrom": [
+            "vote_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "promise_evidence_news_item_id_news_items_id_fk": {
+          "name": "promise_evidence_news_item_id_news_items_id_fk",
+          "tableFrom": "promise_evidence",
+          "tableTo": "news_items",
+          "columnsFrom": [
+            "news_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "promise_evidence_claim_id_claims_id_fk": {
+          "name": "promise_evidence_claim_id_claims_id_fk",
+          "tableFrom": "promise_evidence",
+          "tableTo": "claims",
+          "columnsFrom": [
+            "claim_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "promise_evidence_promise_id_bill_id_vote_id_news_item_id_claim_id_unique": {
+          "name": "promise_evidence_promise_id_bill_id_vote_id_news_item_id_claim_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "promise_id",
+            "bill_id",
+            "vote_id",
+            "news_item_id",
+            "claim_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "promise_evidence_exactly_one_target": {
+          "name": "promise_evidence_exactly_one_target",
+          "value": "num_nonnulls(\"promise_evidence\".\"bill_id\", \"promise_evidence\".\"vote_id\", \"promise_evidence\".\"news_item_id\", \"promise_evidence\".\"claim_id\") = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.promise_relations": {
+      "name": "promise_relations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "promise_a_id": {
+          "name": "promise_a_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "promise_b_id": {
+          "name": "promise_b_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "relation_type": {
+          "name": "relation_type",
+          "type": "promise_relation_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "promise_relations_promise_a_id_promises_id_fk": {
+          "name": "promise_relations_promise_a_id_promises_id_fk",
+          "tableFrom": "promise_relations",
+          "tableTo": "promises",
+          "columnsFrom": [
+            "promise_a_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "promise_relations_promise_b_id_promises_id_fk": {
+          "name": "promise_relations_promise_b_id_promises_id_fk",
+          "tableFrom": "promise_relations",
+          "tableTo": "promises",
+          "columnsFrom": [
+            "promise_b_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "promise_relations_promise_a_id_promise_b_id_relation_type_unique": {
+          "name": "promise_relations_promise_a_id_promise_b_id_relation_type_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "promise_a_id",
+            "promise_b_id",
+            "relation_type"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "promise_relations_canonical_order": {
+          "name": "promise_relations_canonical_order",
+          "value": "\"promise_relations\".\"promise_a_id\" < \"promise_relations\".\"promise_b_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.promise_sources": {
+      "name": "promise_sources",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "promise_id": {
+          "name": "promise_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_item_id": {
+          "name": "source_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "relation": {
+          "name": "relation",
+          "type": "promise_source_relation",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "promise_sources_one_primary_idx": {
+          "name": "promise_sources_one_primary_idx",
+          "columns": [
+            {
+              "expression": "promise_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"promise_sources\".\"relation\" = 'primary'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "promise_sources_promise_id_promises_id_fk": {
+          "name": "promise_sources_promise_id_promises_id_fk",
+          "tableFrom": "promise_sources",
+          "tableTo": "promises",
+          "columnsFrom": [
+            "promise_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "promise_sources_source_item_id_collected_items_id_fk": {
+          "name": "promise_sources_source_item_id_collected_items_id_fk",
+          "tableFrom": "promise_sources",
+          "tableTo": "collected_items",
+          "columnsFrom": [
+            "source_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "promise_sources_promise_id_source_item_id_unique": {
+          "name": "promise_sources_promise_id_source_item_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "promise_id",
+            "source_item_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.promises": {
+      "name": "promises",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "politician_id": {
+          "name": "politician_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "exact_text": {
+          "name": "exact_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issue_area_id": {
+          "name": "issue_area_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "date_made": {
+          "name": "date_made",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_date": {
+          "name": "target_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fulfillment_status": {
+          "name": "fulfillment_status",
+          "type": "fulfillment_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'not_yet_due'"
+        },
+        "fulfillment_locked": {
+          "name": "fulfillment_locked",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "promises_politician_id_politicians_id_fk": {
+          "name": "promises_politician_id_politicians_id_fk",
+          "tableFrom": "promises",
+          "tableTo": "politicians",
+          "columnsFrom": [
+            "politician_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "promises_issue_area_id_issue_areas_id_fk": {
+          "name": "promises_issue_area_id_issue_areas_id_fk",
+          "tableFrom": "promises",
+          "tableTo": "issue_areas",
+          "columnsFrom": [
+            "issue_area_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.review_actions": {
+      "name": "review_actions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "target_type": {
+          "name": "target_type",
+          "type": "review_target_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "field_changed": {
+          "name": "field_changed",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_value": {
+          "name": "previous_value",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "new_value": {
+          "name": "new_value",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor": {
+          "name": "actor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "review_actions_target_idx": {
+          "name": "review_actions_target_idx",
+          "columns": [
+            {
+              "expression": "target_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.suppression_rules": {
+      "name": "suppression_rules",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "rule_type": {
+          "name": "rule_type",
+          "type": "suppression_rule_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pattern": {
+          "name": "pattern",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     }
   },
   "enums": {
@@ -1911,6 +3567,145 @@
         "present",
         "absent",
         "excused"
+      ]
+    },
+    "public.mention_confidence": {
+      "name": "mention_confidence",
+      "schema": "public",
+      "values": [
+        "confirmed",
+        "inferred"
+      ]
+    },
+    "public.news_item_relation_type": {
+      "name": "news_item_relation_type",
+      "schema": "public",
+      "values": [
+        "exact_duplicate",
+        "possible_near_duplicate"
+      ]
+    },
+    "public.platform": {
+      "name": "platform",
+      "schema": "public",
+      "values": [
+        "news",
+        "x",
+        "facebook",
+        "instagram",
+        "rss",
+        "other"
+      ]
+    },
+    "public.claim_relation_type": {
+      "name": "claim_relation_type",
+      "schema": "public",
+      "values": [
+        "possible_restatement"
+      ]
+    },
+    "public.claim_response_stance": {
+      "name": "claim_response_stance",
+      "schema": "public",
+      "values": [
+        "denies",
+        "confirms",
+        "clarifies"
+      ]
+    },
+    "public.claim_source_relation": {
+      "name": "claim_source_relation",
+      "schema": "public",
+      "values": [
+        "primary",
+        "supporting",
+        "contradicting"
+      ]
+    },
+    "public.target_confidence": {
+      "name": "target_confidence",
+      "schema": "public",
+      "values": [
+        "confirmed",
+        "inferred"
+      ]
+    },
+    "public.verification_set_by": {
+      "name": "verification_set_by",
+      "schema": "public",
+      "values": [
+        "processor",
+        "admin"
+      ]
+    },
+    "public.verification_status": {
+      "name": "verification_status",
+      "schema": "public",
+      "values": [
+        "UNVERIFIED_CLAIM",
+        "SUPPORTED_BY_PRIMARY_SOURCE",
+        "CORROBORATED",
+        "CONTRADICTED",
+        "DISPUTED_BY_SOURCE",
+        "OPINION",
+        "SATIRE",
+        "UNKNOWN"
+      ]
+    },
+    "public.fulfillment_status": {
+      "name": "fulfillment_status",
+      "schema": "public",
+      "values": [
+        "not_yet_due",
+        "in_progress",
+        "fulfilled",
+        "broken",
+        "partially_fulfilled",
+        "stalled"
+      ]
+    },
+    "public.promise_evidence_supports": {
+      "name": "promise_evidence_supports",
+      "schema": "public",
+      "values": [
+        "fulfillment",
+        "non_fulfillment",
+        "context"
+      ]
+    },
+    "public.promise_relation_type": {
+      "name": "promise_relation_type",
+      "schema": "public",
+      "values": [
+        "possible_restatement"
+      ]
+    },
+    "public.promise_source_relation": {
+      "name": "promise_source_relation",
+      "schema": "public",
+      "values": [
+        "primary",
+        "supporting"
+      ]
+    },
+    "public.review_target_type": {
+      "name": "review_target_type",
+      "schema": "public",
+      "values": [
+        "claim",
+        "promise",
+        "news_item_politician",
+        "politician_alias",
+        "collected_item"
+      ]
+    },
+    "public.suppression_rule_type": {
+      "name": "suppression_rule_type",
+      "schema": "public",
+      "values": [
+        "url_pattern",
+        "content_hash",
+        "claim_text_pattern"
       ]
     }
   },

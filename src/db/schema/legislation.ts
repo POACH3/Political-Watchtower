@@ -3,7 +3,7 @@
 import { date, pgEnum, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
 import { idColumn, timestampColumns } from "./_shared";
 import { collectedItems } from "./collected-items";
-import { jurisdictions, legislativeSessions } from "./jurisdictions";
+import { legislativeSessions } from "./jurisdictions";
 import { politicians } from "./people";
 
 // Reference data, seeded once from the fixed ~10-15 taxonomy (Stage 1
@@ -30,25 +30,28 @@ export const bills = pgTable(
   "bills",
   {
     ...idColumn,
-    jurisdictionId: uuid("jurisdiction_id")
-      .notNull()
-      .references(() => jurisdictions.id),
-    // Bill numbers get reused every session, so this (not jurisdictionId
-    // alone) is what makes externalBillId actually unique.
+    // No jurisdictionId — sessionId already implies it (same redundancy
+    // fix as Term/District/Vote); this table already used the correct
+    // UNIQUE (session_id, external_bill_id) shape, which is what Vote's
+    // dedup key was changed to match.
     sessionId: uuid("session_id")
       .notNull()
       .references(() => legislativeSessions.id),
     externalBillId: text("external_bill_id").notNull(),
-    title: text("title").notNull(),
+    // Nullable — descriptive, not identifying. A bill can be tracked by
+    // its external_bill_id before a title/status/date has synced, same
+    // "only provenance + the identifying field are required" principle
+    // as everywhere else in this pass.
+    title: text("title"),
     summaryText: text("summary_text"),
     // Link, not a full-text mirror — bill-text copyright status isn't
     // safe to assume across every jurisdiction this gets forked to.
     fullTextUrl: text("full_text_url"),
-    introducedDate: date("introduced_date").notNull(),
-    status: billStatusEnum("status").notNull(),
+    introducedDate: date("introduced_date"),
+    status: billStatusEnum("status"),
     // The jurisdiction's own status string, unnormalized, kept alongside
     // the enum for anything jurisdiction-specific the enum can't capture.
-    rawStatus: text("raw_status").notNull(),
+    rawStatus: text("raw_status"),
     sourceItem: uuid("source_item")
       .notNull()
       .references(() => collectedItems.id),
@@ -57,7 +60,7 @@ export const bills = pgTable(
   (table) => [unique().on(table.sessionId, table.externalBillId)],
 );
 
-export const sponsorRoleEnum = pgEnum("sponsor_role", ["primary_sponsor", "cosponsor"]);
+export const sponsorRoleEnum = pgEnum("sponsor_role", ["primary_sponsor", "cosponsor", "other"]);
 
 export const billSponsors = pgTable(
   "bill_sponsors",
@@ -69,7 +72,9 @@ export const billSponsors = pgTable(
     politicianId: uuid("politician_id")
       .notNull()
       .references(() => politicians.id),
-    role: sponsorRoleEnum("role").notNull(),
+    // Nullable — the sponsorship relationship itself is still meaningful
+    // even before we know which kind it is.
+    role: sponsorRoleEnum("role"),
     // Every other government-record table has a sourceItem; sponsorship
     // is a factual assertion about a named person with no review gate,
     // so it shouldn't be the exception.

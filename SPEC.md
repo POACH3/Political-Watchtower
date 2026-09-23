@@ -233,12 +233,19 @@ CollectedItem
  │                          (application/json for an API poll,
  │                          text/html for a crawled page, application/pdf
  │                          or image/* for an upload, ...)
- ├── raw_payload          — inline (jsonb/text) for small structured
- │                          content (API responses, article text); a
- │                          stored-file reference (path/object key), not
+ ├── raw_payload          — text, not jsonb; the original fetched
+ │                          content verbatim (a raw API response body,
+ │                          raw HTML, ...) for small structured content —
+ │                          a stored-file reference (path/object key), not
  │                          inline bytes, for binary uploads — same
  │                          "don't mirror everything, keep a pointer"
- │                          instinct as the news provenance decision below
+ │                          instinct as the news provenance decision
+ │                          below. Not jsonb: re-serializing a JSON value
+ │                          (even via a round-trip through a JS object)
+ │                          can reorder/reformat it and stop being
+ │                          byte-identical to what was actually fetched,
+ │                          which breaks `content_hash` as an integrity
+ │                          check over what's actually stored
  ├── intake_status       — pending | passed | flagged | rejected (see
  │                          Validation below — a safety/hygiene judgment,
  │                          distinct from `Claim`'s verification_status,
@@ -249,6 +256,10 @@ CollectedItem
                              pass instead of being silently re-flagged
                              forever                            [admin GUI]
 ```
+`UNIQUE (content_hash, source_url)` — the actual exact-dedup key: a
+re-fetch of the same content from the same URL resolves to the existing
+row (upsert, not a duplicate insert or an error) rather than accumulating
+a fresh row every poll cycle.
 
 This is what every collector **produces**. What follows is the shape the
 **aggregator turns it into** — the actual core schema, in Postgres.
@@ -349,7 +360,16 @@ at different layers:
 
 This replaces the one-line entity list in Stage 1 with actual field-level
 shapes. Convention: every entity gets a UUID `id` + `created_at`/
-`updated_at`, omitted below for brevity.
+`updated_at`, omitted below for brevity. `updated_at` is kept current by
+a `BEFORE UPDATE` Postgres trigger (one hand-written trigger function
+shared across every table that has the column), not application code —
+a trigger, unlike an ORM's own on-update hook, also covers any raw-SQL
+write path, not just ones that go through the app's service layer.
+`ReviewAction`/`SuppressionRule` are the exception: append-only audit
+tables get `created_at` only, deliberately no `updated_at`/trigger — an
+"edited" timestamp on a row that exists specifically to record an
+immutable past action would invite the kind of after-the-fact edit an
+audit trail exists to rule out.
 
 **Every field below is tagged with which pipeline layer writes it** —
 `[aggregator]` fields are set when the row is created/updated from
@@ -377,19 +397,27 @@ out once here instead of repeated per table:**
   a processor re-run doesn't create both `(A, B)` and `(B, A)` as separate
   rows for what's the same relationship.
 - **When `jsonb` is appropriate vs. when it isn't**, stated once as a rule
-  rather than decided per field: `jsonb` is right for data that's
-  genuinely unstructured/variably-shaped *and* never queried relationally
-  — `CollectedItem.raw_payload` is the model case (its shape depends
-  entirely on `collector_type`/`content_type`, and it's an archival/
-  re-processing artifact, not something joined or filtered on). It's the
-  wrong choice for anything that needs a real FK, a `UNIQUE` constraint,
-  or a "find all X for Y" query — which is exactly why
-  `Politician.external_ids` became a real table instead of a jsonb map,
-  and why every `[]`-suffixed array field elsewhere in this doc became a
-  join table instead. Don't reach for `jsonb` as a shortcut around
-  designing a join table; do reach for it when the alternative is a
-  sparse table of nullable typed columns for a value whose type
-  genuinely varies (see `ReviewAction` and `CollectorJob` below).
+  rather than decided per field: `jsonb` is right for a value whose type
+  genuinely varies row-to-row and is never joined or filtered on — see
+  `ReviewAction.previous_value`/`new_value` below (`field_changed` varies
+  by `target_type`, so the value being corrected is a different type each
+  time). It's the wrong choice for anything that needs a real FK, a
+  `UNIQUE` constraint, or a "find all X for Y" query — which is exactly
+  why `Politician.external_ids` became a real table instead of a jsonb
+  map, and why every `[]`-suffixed array field elsewhere in this doc
+  became a join table instead. `CollectedItem.raw_payload` looks like a
+  `jsonb` candidate by this rule (its shape depends entirely on
+  `collector_type`/`content_type`, and it's an archival/re-processing
+  artifact, not something joined or filtered on) but is deliberately
+  `text`, not `jsonb`: it stores the original fetched content verbatim,
+  and re-serializing a JSON value (even via a round-trip through a JS
+  object) can reorder/reformat it and stop being byte-identical to what
+  was actually fetched — which breaks `content_hash` as an integrity
+  check over what's actually stored. Don't reach for `jsonb` as a
+  shortcut around designing a join table; do reach for it when the
+  alternative is a sparse table of nullable typed columns for a value
+  whose type genuinely varies, and not for anything meant to be an exact
+  byte-for-byte copy of external input.
 
 ### Jurisdictions & elections
 
@@ -408,7 +436,7 @@ Jurisdiction
  ├── slug              — stable identifier every FK below actually uses
  │                        (e.g. 'ut', 'us-congress') — not a display string
  ├── name
- ├── level              — 'federal' | 'state' | 'local'
+ ├── level              — 'federal' | 'state' | 'local' | 'other'
  └── parent_jurisdiction_id — nullable, FK → Jurisdiction (e.g. a county
                               jurisdiction under its state, if local
                               jurisdictions get added later)
@@ -420,6 +448,7 @@ Chamber
  ├── slug              — unique within jurisdiction (e.g. 'house', 'senate')
  └── name
 ```
+`UNIQUE (jurisdiction_id, slug)`.
 
 ```
 LegislativeSession                 — closes the "bill numbers get reused
@@ -435,20 +464,22 @@ LegislativeSession                 — closes the "bill numbers get reused
  ├── start_date
  └── end_date           — nullable
 ```
+`UNIQUE (jurisdiction_id, external_session_id)`.
 
 ```
 District                           — redistricting-aware: a district's
                                       boundaries can change what the same
                                       label refers to, so this is a
                                       dated record, not just a string
- ├── jurisdiction_id   — FK → Jurisdiction
- ├── chamber_id         — FK → Chamber
+ ├── chamber_id         — FK → Chamber (no separate jurisdiction_id — it's
+ │                          redundant once chamber_id implies it)
  ├── external_district_id — the jurisdiction's own identifier
  │                          (e.g. "District 12")
  ├── name               — nullable
  ├── valid_from
  └── valid_to           — nullable; null = currently in effect
 ```
+`UNIQUE (chamber_id, external_district_id, valid_from)`.
 
 ```
 Election
@@ -459,9 +490,15 @@ Election
  ├── district_id        — nullable, FK → District (null for an at-large/
  │                          statewide race)
  ├── election_date
- ├── election_type      — 'general' | 'primary' | 'special' | 'runoff'
+ ├── election_type      — 'general' | 'primary' | 'special' | 'runoff' |
+ │                          'other'
  └── source_item        — FK → CollectedItem, required
 ```
+`UNIQUE (jurisdiction_id, chamber_id, district_id, election_date,
+election_type)`. `jurisdiction_id` stays required here (unlike
+`Term`/`District`/`Vote` below) — `chamber_id`/`district_id` are both
+nullable on this table, so it isn't always derivable from them the way it
+is elsewhere.
 
 ```
 Candidacy                          — a specific person's run for a
@@ -479,12 +516,17 @@ Candidacy                          — a specific person's run for a
                                       missing-permission one
  ├── politician_id      — FK → Politician                    [aggregator]
  ├── election_id         — FK → Election                      [aggregator]
- ├── party               — at the time of this candidacy (mirrors
- │                          Term.party)                        [aggregator]
+ ├── party               — nullable; at the time of this candidacy
+ │                          (mirrors Term.party) — same "only provenance +
+ │                          the identifying field are required" principle
+ │                          as everywhere else: a candidacy is still real
+ │                          and worth recording before the party is known,
+ │                          or for a nonpartisan race         [aggregator]
  ├── outcome             — 'won' | 'lost' | 'withdrew' | 'pending'
  │                                                              [aggregator]
  └── source_item         — FK → CollectedItem, required         [aggregator]
 ```
+`UNIQUE (politician_id, election_id)`.
 A `Candidacy` that resolves to `outcome: 'won'` is what an aggregator sync
 uses to create the corresponding `Term` — `Term` gets a nullable
 `candidacy_id` FK (below) so a seated legislator's profile can trace back
@@ -595,12 +637,14 @@ Term                                — collapses Stage 1's "Office/Term"
                                        earn its keep against anything in
                                        Stage 6's comparison views
  ├── politician_id       — FK → Politician                [aggregator]
- ├── jurisdiction_id     — FK → Jurisdiction               [aggregator]
- ├── chamber_id          — FK → Chamber                     [aggregator]
+ ├── chamber_id          — FK → Chamber (no separate jurisdiction_id — it's
+ │                          redundant once chamber_id implies it)         [aggregator]
  ├── district_id         — FK → District                    [aggregator]
  ├── candidacy_id        — nullable, FK → Candidacy — the race that put
  │                          this person in this seat, if tracked         [aggregator]
- ├── party               — at the time of this term         [aggregator]
+ ├── party               — nullable; at the time of this term — see
+ │                          Candidacy.party above for why this isn't
+ │                          required                          [aggregator]
  ├── start_date                                              [aggregator]
  ├── end_date            — nullable; null = currently serving [aggregator]
  └── source_item         — FK → CollectedItem                [aggregator]
@@ -612,7 +656,9 @@ app-level discipline, since "current party" being derived from "the most
 recent `Term` with a null `end_date`" silently breaks the moment two open
 terms exist for the same person (a source failing to close out an old
 term on a re-election, for instance) — that gives you two "current"
-parties/districts with no error raised anywhere.
+parties/districts with no error raised anywhere. `UNIQUE (politician_id,
+chamber_id, start_date)` as a second, ordinary constraint alongside the
+exclusion constraint.
 
 ### Legislation
 
@@ -626,15 +672,22 @@ IssueArea                          — reference data, seeded once from the
 ```
 
 ```
-Bill
- ├── jurisdiction_id     — FK → Jurisdiction                [aggregator]
+Bill                                — all fields below except
+                                      external_bill_id/source_item are
+                                      nullable, same "only provenance + the
+                                      identifying field are required"
+                                      principle as Politician — a bill row
+                                      is worth creating from a bare roster
+                                      poll before its title/status syncs in
  ├── session_id          — FK → LegislativeSession — bill numbers get
- │                          reused every session, so this (not
- │                          jurisdiction_id alone) is what makes
- │                          external_bill_id actually unique              [aggregator]
+ │                          reused every session, so this (not a
+ │                          jurisdiction_id) is what makes
+ │                          external_bill_id actually unique; no separate
+ │                          jurisdiction_id column — session_id implies
+ │                          it                                 [aggregator]
  ├── external_bill_id    — the jurisdiction's own identifier
  │                          (e.g. "HB 123")                  [aggregator]
- ├── title                                                    [aggregator]
+ ├── title               — nullable                           [aggregator]
  ├── summary_text        — official summary, if the source provides one
  │                                                             [aggregator]
  ├── full_text_url       — link, not a full-text mirror (same
@@ -642,11 +695,11 @@ Bill
  │                          provenance decision — bill-text copyright
  │                          status isn't safe to assume across every
  │                          jurisdiction this gets forked to) [aggregator]
- ├── introduced_date                                          [aggregator]
- ├── status              — normalized enum: introduced /
+ ├── introduced_date     — nullable                           [aggregator]
+ ├── status              — nullable; normalized enum: introduced /
  │                          in_committee / passed_chamber / passed_both /
  │                          signed / vetoed / failed          [aggregator]
- ├── raw_status          — the jurisdiction's own status string,
+ ├── raw_status          — nullable; the jurisdiction's own status string,
  │                          unnormalized, kept alongside the enum for
  │                          anything jurisdiction-specific the enum can't
  │                          capture                            [aggregator]
@@ -660,7 +713,8 @@ BillSponsor                        — join table; sponsorship has its own
                                       bare many-to-many
  ├── bill_id             — FK → Bill                         [aggregator]
  ├── politician_id       — FK → Politician                   [aggregator]
- ├── role                — 'primary_sponsor' | 'cosponsor'   [aggregator]
+ ├── role                — nullable; 'primary_sponsor' | 'cosponsor' |
+ │                          'other'                           [aggregator]
  └── source_item         — FK → CollectedItem, required — this was
                             missing before; every other government-record
                             table has one, and sponsorship is a factual
@@ -711,7 +765,10 @@ Promise                            — structurally similar to Claim (an
  │                                                              [aggregator]
  ├── exact_text                                                 [aggregator]
  ├── issue_area_id       — nullable, FK → IssueArea               [aggregator]
- ├── date_made                                                    [aggregator]
+ ├── date_made           — nullable; same "only provenance + the
+ │                          identifying field are required" principle —
+ │                          `exact_text` is what's required here, not the
+ │                          date it was made                    [aggregator]
  ├── target_date         — nullable, if the promise itself named a
  │                          deadline (e.g. "by end of my first term")
  │                                                                  [aggregator]
@@ -726,7 +783,12 @@ PromiseSource
  ├── promise_id      — FK → Promise
  ├── source_item_id  — FK → CollectedItem
  └── relation        — 'primary' | 'supporting'
+                        (exactly one 'primary' row per promise, enforced by
+                        a partial unique index — mirrors ClaimSource; a
+                        gap an independent review caught, since this table
+                        originally had no uniqueness at all)
 ```
+`UNIQUE (promise_id, source_item_id)`, alongside the partial index above.
 
 ```
 PromiseRelation                    — same pattern as ClaimRelation: two
@@ -738,6 +800,8 @@ PromiseRelation                    — same pattern as ClaimRelation: two
  ├── promise_b_id    — FK → Promise
  └── relation_type   — 'possible_restatement'
 ```
+`CHECK (promise_a_id < promise_b_id)`, `UNIQUE (promise_a_id, promise_b_id,
+relation_type)` — same canonicalization as `ClaimRelation` above.
 `[processor: statement-similarity]`
 
 ```
@@ -773,6 +837,7 @@ PromiseEvidence                    — what fulfillment_status is based on.
                         caught this time before it shipped instead of
                         after
 ```
+`UNIQUE (promise_id, bill_id, vote_id, news_item_id, claim_id)`.
 `[processor: promise-tracking]`
 
 ### Votes
@@ -780,8 +845,9 @@ PromiseEvidence                    — what fulfillment_status is based on.
 ```
 Vote                                — the roll-call event itself, not any
                                        one politician's vote on it
- ├── jurisdiction_id     — FK → Jurisdiction                  [aggregator]
- ├── chamber_id          — FK → Chamber                        [aggregator]
+ ├── chamber_id          — FK → Chamber (no separate jurisdiction_id —
+ │                          session_id/chamber_id already imply it, same
+ │                          redundancy fix as Term/District)       [aggregator]
  ├── session_id          — FK → LegislativeSession               [aggregator]
  ├── external_vote_id    — the jurisdiction's own roll-call identifier.
  │                          Without this, re-polling the same vote has no
@@ -803,14 +869,23 @@ Vote                                — the roll-call event itself, not any
  │                          bill, or to distinguish multiple votes on
  │                          the same bill at the same stage           [aggregator]
  ├── vote_date                                                [aggregator]
- ├── vote_stage          — e.g. 'committee' | 'third_reading' |
+ ├── vote_stage          — nullable; e.g. 'committee' | 'third_reading' |
  │                          'final_passage' (jurisdiction-defined)
  │                                                              [aggregator]
  ├── result              — 'passed' | 'failed'                [aggregator]
- ├── yea_count / nay_count / other_count                       [aggregator]
+ ├── yea_count / nay_count / other_count — nullable; the 2-value `result`
+ │                          enum can't express "tied" / "no quorum" /
+ │                          "withdrawn", which real jurisdictions report
+ │                                                              [aggregator]
+ ├── raw_result          — nullable; the jurisdiction's own outcome
+ │                          string, unnormalized — same raw_status/
+ │                          raw_value pattern as Bill/VoteRecord, missing
+ │                          here originally even though `result` has
+ │                          exactly the same normalization problem those
+ │                          two fields exist to solve            [aggregator]
  └── source_item                                                [aggregator]
 ```
-`UNIQUE (jurisdiction_id, external_vote_id)`.
+`UNIQUE (session_id, external_vote_id)`.
 
 ```
 VoteRecord                          — one politician's vote on one Vote
@@ -818,10 +893,16 @@ VoteRecord                          — one politician's vote on one Vote
  ├── politician_id       — FK → Politician                    [aggregator]
  ├── value               — normalized enum: 'yea' | 'nay' | 'present' |
  │                          'absent' | 'excused'                [aggregator]
- ├── raw_value           — the jurisdiction's own value string,
- │                          unnormalized                        [aggregator]
+ ├── raw_value           — nullable; the jurisdiction's own value string,
+ │                          unnormalized. Kept required-in-spirit (every
+ │                          real vote record has one) but not NOT NULL,
+ │                          since `value` itself is the field that
+ │                          actually has to be known for this row to mean
+ │                          anything                              [aggregator]
  └── source_item                                                 [aggregator]
 ```
+`UNIQUE (vote_id, politician_id)` — one politician can't have two votes on
+the same roll call.
 
 ### News & social
 
@@ -872,16 +953,19 @@ NewsItemSource                     — which raw fetch(es) this item came
  ├── news_item_id    — FK → NewsItem/SocialPost           [aggregator]
  └── source_item_id  — FK → CollectedItem                  [aggregator]
 ```
+`UNIQUE (news_item_id, source_item_id)`.
 
 ```
 NewsItemRelation                   — same shape as ClaimRelation, for
                                       duplicates/near-duplicates instead
-                                      of restatements
+                                      of restatements, including the same
+                                      canonical-order CHECK
  ├── news_item_a_id  — FK → NewsItem/SocialPost
  ├── news_item_b_id  — FK → NewsItem/SocialPost
  └── relation_type   — 'exact_duplicate' | 'possible_near_duplicate'
 ```
-`[processor: near-duplicate detection]`
+`[processor: near-duplicate detection]`. `CHECK (news_item_a_id <
+news_item_b_id)`, `UNIQUE (news_item_a_id, news_item_b_id, relation_type)`.
 
 ```
 NewsItemPolitician                 — replaces mentioned_politicians[];
@@ -894,7 +978,7 @@ NewsItemPolitician                 — replaces mentioned_politicians[];
  └── locked          — an admin's correction (confirming or rejecting a
                         mention) survives the next entity-resolution run
 ```
-`[processor: entity-resolution]`
+`[processor: entity-resolution]`. `UNIQUE (news_item_id, politician_id)`.
 
 ### Review & audit
 
@@ -935,9 +1019,12 @@ ReviewAction                       — one row per human correction, across
  ├── actor            — the admin identity (Stage 4)
  └── created_at
 ```
-`[admin GUI]` — written whenever an admin action changes a field that
-also has a `locked`/`verification_locked`-style flag; the write and the
-lock happen together, not as two separate steps that could drift apart.
+`INDEX (target_type, target_id)` — "show the review history for this
+claim" is this table's only real access path, and was entirely unindexed
+before an independent review caught it. `[admin GUI]` — written whenever
+an admin action changes a field that also has a `locked`/
+`verification_locked`-style flag; the write and the lock happen together,
+not as two separate steps that could drift apart.
 
 **Retraction & suppression.** `Claim`/`NewsItem` above both got
 `is_suppressed`/`suppressed_at`/`suppression_reason` fields — soft
@@ -1061,22 +1148,27 @@ ClaimTarget                        — politician(s) a claim is about
  ├── politician_id    — FK → Politician
  └── confidence       — 'confirmed' | 'inferred' (mirrors NewsItemPolitician)
 ```
+`UNIQUE (claim_id, politician_id)`.
 
 ```
 ClaimResponse                      — replaces target_response; a
                                       politician's statement addressing a
-                                      claim, explicitly typed rather than
-                                      an unspecified FK, and multi-valued
-                                      in both directions
- ├── claim_id           — FK → Claim
- ├── response_type       — 'news_item' | 'claim' (a response is itself
- │                          either a NewsItem/SocialPost or another Claim
- │                          — e.g. a follow-up statement that itself gets
- │                          claim-extracted)
- ├── response_id         — the referenced row's ID, per response_type
- └── stance              — 'denies' | 'confirms' | 'clarifies'
+                                      claim, and multi-valued in both
+                                      directions
+ ├── claim_id                — FK → Claim
+ ├── response_news_item_id   — nullable, FK → NewsItem
+ ├── response_claim_id       — nullable, FK → Claim (a response is itself
+ │                              either a NewsItem/SocialPost or another
+ │                              Claim — e.g. a follow-up statement that
+ │                              itself gets claim-extracted)
+ └── stance                  — 'denies' | 'confirms' | 'clarifies'
 ```
-`[processor: claim extraction]` for both.
+Exclusive-arc FK, not a `response_type` discriminator + untyped
+`response_id`: exactly one of `response_news_item_id`/`response_claim_id`
+is set, enforced by a `CHECK (num_nonnulls(...) = 1)` constraint — a real
+FK on whichever one applies, not a same-shape-different-meaning ID column
+Postgres can't validate. `[processor: claim extraction]` for both.
+`UNIQUE (claim_id, response_news_item_id, response_claim_id)`.
 
 No `source_item`/`supporting_sources[]`/`contradicting_sources[]` here —
 sources are joined via `ClaimSource` (below), not array columns, so a
@@ -1096,6 +1188,15 @@ ClaimSource
                         (exactly one 'primary' row per claim, enforced by
                         a partial unique index)
 ```
+`UNIQUE (claim_id, source_item_id)`, alongside the partial index above. A
+`DEFERRABLE INITIALLY DEFERRED` constraint trigger on both `claims` and
+`claim_sources` additionally enforces "every Claim has exactly one
+`primary` ClaimSource row" (not just "has a source of any relation") at
+COMMIT — a hand-written trigger, since Postgres has no FK/CHECK that can
+express "must have at least one row in another table." It also fires on
+DELETE/UPDATE of `claim_sources`, so a primary source can't be
+re-parented, deleted, or demoted out from under an existing claim. Same
+pattern, same trigger shape, for `Promise`/`PromiseSource` below.
 
 ```
 ClaimRelation                      — links two Claims a processor thinks
@@ -1105,6 +1206,11 @@ ClaimRelation                      — links two Claims a processor thinks
  ├── claim_b_id      — FK → Claim
  └── relation_type   — 'possible_restatement'
 ```
+`CHECK (claim_a_id < claim_b_id)` and `UNIQUE (claim_a_id, claim_b_id,
+relation_type)` — canonicalization enforced at the DB level, not just app
+discipline, so a processor re-run doesn't create both `(A, B)` and `(B,
+A)` rows for the same relationship. Same shape as `PromiseRelation`/
+`NewsItemRelation` below.
 `[processor: statement-similarity]` — same politician + overlapping
 issue area + text similarity, flagged for a human/presenter to group,
 never auto-merged.
@@ -1830,26 +1936,40 @@ finding about Stage 1's interface design, not just a Stage 15 bug.
 
 ## Next step
 
-Stage 0 and Stage 1 are both done and verified end-to-end (schema
-generated, migrated against real Postgres, constraints tested — the
-provenance `NOT NULL`, the `Term` exclusion constraint, and
-`PoliticianExternalId`'s uniqueness all confirmed to actually reject bad
-data, not just documented as if they do).
+Stages 0-2 are all done and verified end-to-end — schema generated,
+migrated against real Postgres from a genuinely clean volume, and every
+constraint that matters tested directly, not just documented as if it
+holds: the provenance `NOT NULL`s, the `Term` exclusion constraint,
+`PoliticianExternalId`'s uniqueness, `ClaimSource`'s one-primary-per-claim
+partial unique index, and — the one that needed a real fix, not just a
+test — that a `Claim`/`Promise` can't commit with zero source rows.
 
-**Left open from Stage 1, not blocking Stage 2:** the issue-area taxonomy
+That last one was a genuine gap, not just a missing test: nothing in the
+schema as originally written actually enforced it. `ClaimSource`/
+`PromiseSource` only FK *to* `Claim`/`Promise`, so nothing stopped a
+sourceless row from existing. Fixed with the hand-written triggers in
+`0001_narrative_oversight_schema.sql` — `DEFERRABLE INITIALLY DEFERRED`
+constraint triggers on `claims`/`promises`, checked at commit rather than
+at the row's own insert, so the service layer can insert the parent row
+and its primary source in either order within one transaction. Also fires
+on DELETE/UPDATE of `claim_sources`/`promise_sources`, so a primary
+source can't be re-parented, deleted, or demoted out from under an
+existing claim/promise afterward either — not just insert-time, per a
+second independent review that caught the first version only checking
+the parent row's own insert.
+
+**Left open from Stage 1, not blocking Stage 3:** the issue-area taxonomy
 [DECISION TO CONFIRM] — the `issue_areas` table exists but is unseeded;
 no fixed list has actually been chosen yet. Needs an answer before Stage
-6 (radar chart) or Stage 9 (ML tagging upgrade) can use it, but doesn't
-block Stage 2's schema work.
+6 (radar chart) or Stage 9 (ML tagging upgrade) can use it.
 
-**Also not yet built, worth naming so it isn't assumed to exist:** Stage
-1's service layer covers `collected_items`, `jurisdictions`/`chambers`,
-and `politicians` — enough to support Stage 1's own tests — but not
-`bills`/`votes`/`terms`/etc. yet. Stage 3 will need those before it can
-actually ingest anything.
+**Not yet built, worth naming so it isn't assumed to exist:** the service
+layer only covers `collected_items`, `jurisdictions`/`chambers`, and
+`politicians` — enough to support Stage 1/2's own tests, not a complete
+service layer for every entity now in the schema. Stage 3 will need
+`bills`/`votes`/`terms` service functions before it can actually ingest
+anything; Stage 8-10 will need `news_items`/`claims`/`promises` ones.
 
-Stage 2 (narrative & oversight schema) is next — its own
-[DECISION TO CONFIRM] items (Stage 4's auth mechanism and runtime
-collector toggle) are actually Stage 4 decisions surfaced early, not
-Stage 2 ones; Stage 2 itself has no open decisions blocking it from
-starting.
+Stage 3 (pilot-state government data ingestion) is next — no open
+decisions block it from starting beyond its own stated research task
+(confirming what the pilot state's legislature API actually exposes).
