@@ -4,7 +4,6 @@
 // command, exit 0 allows it.
 
 import { readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
 
 function block(reason) {
   process.stderr.write(`${reason}\n`);
@@ -61,41 +60,13 @@ function checkForceOperations(args) {
   return null;
 }
 
-function getStagedProfileFiles() {
-  try {
-    const out = execSync("git diff --cached --name-only --diff-filter=ACM", { encoding: "utf8" });
-    return out
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => /^content\/profiles\/.*\.json$/.test(line));
-  } catch {
-    return [];
-  }
-}
-
-function checkProfileSources(args) {
-  if (args[1] !== "commit") return null;
-
-  const files = getStagedProfileFiles();
-  for (const file of files) {
-    let content;
-    try {
-      content = execSync(`git show :${JSON.stringify(file).slice(1, -1)}`, { encoding: "utf8" });
-    } catch {
-      continue; // file not readable from the index (e.g. deleted) — nothing to validate
-    }
-    let data;
-    try {
-      data = JSON.parse(content);
-    } catch {
-      return `Blocked: ${file} is staged but is not valid JSON.`;
-    }
-    if (!Array.isArray(data.sources) || data.sources.length === 0) {
-      return `Blocked: ${file} has an empty or missing "sources" array. Every profile must cite its sources.`;
-    }
-  }
-  return null;
-}
+// Note: this hook no longer checks profile provenance (a "sources" array
+// on a committed content/profiles/*.json file) — that was the original
+// copied-template data model. The real architecture stores profiles as
+// Politician rows in Postgres with a NOT NULL source_item FK, enforced by
+// the schema itself (see SPEC.md "Aggregator output schema"), not by a
+// git hook inspecting committed files. There's no file-based artifact
+// left for a hook to meaningfully check.
 
 const raw = readStdin();
 let payload;
@@ -110,7 +81,7 @@ if (typeof command !== "string") process.exit(0);
 
 for (const segment of findGitInvocations(command)) {
   const args = parseArgs(segment);
-  const reason = checkForceOperations(args) ?? checkProfileSources(args);
+  const reason = checkForceOperations(args);
   if (reason) block(reason);
 }
 

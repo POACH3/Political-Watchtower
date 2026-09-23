@@ -1,0 +1,41 @@
+# Stage 0: app + Postgres only. Stage 3 adds a third service (the worker)
+# once there's a real collector to run — see SPEC.md cross-cutting
+# decision #6.
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      # Overrides .env's DATABASE_URL for the containerized network —
+      # "db" is this compose file's service name, not "localhost".
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/political_watchtower
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: political_watchtower
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

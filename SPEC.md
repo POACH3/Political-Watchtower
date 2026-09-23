@@ -376,6 +376,20 @@ out once here instead of repeated per table:**
   rule (e.g. always store with the lexicographically smaller ID first) so
   a processor re-run doesn't create both `(A, B)` and `(B, A)` as separate
   rows for what's the same relationship.
+- **When `jsonb` is appropriate vs. when it isn't**, stated once as a rule
+  rather than decided per field: `jsonb` is right for data that's
+  genuinely unstructured/variably-shaped *and* never queried relationally
+  — `CollectedItem.raw_payload` is the model case (its shape depends
+  entirely on `collector_type`/`content_type`, and it's an archival/
+  re-processing artifact, not something joined or filtered on). It's the
+  wrong choice for anything that needs a real FK, a `UNIQUE` constraint,
+  or a "find all X for Y" query — which is exactly why
+  `Politician.external_ids` became a real table instead of a jsonb map,
+  and why every `[]`-suffixed array field elsewhere in this doc became a
+  join table instead. Don't reach for `jsonb` as a shortcut around
+  designing a join table; do reach for it when the alternative is a
+  sparse table of nullable typed columns for a value whose type
+  genuinely varies (see `ReviewAction` and `CollectorJob` below).
 
 ### Jurisdictions & elections
 
@@ -910,8 +924,13 @@ ReviewAction                       — one row per human correction, across
  │                        'politician_alias' | 'collected_item'
  ├── target_id
  ├── field_changed
- ├── previous_value
- ├── new_value
+ ├── previous_value    — jsonb; `field_changed` varies by `target_type`
+ │                        (a `verification_status` enum one row, a
+ │                        `fulfillment_status` enum another, ...), so the
+ │                        value being corrected is a different type each
+ │                        time — jsonb captures whatever it actually was
+ │                        without a sparse table of nullable typed columns
+ ├── new_value         — jsonb, same reasoning
  ├── reason           — nullable
  ├── actor            — the admin identity (Stage 4)
  └── created_at
@@ -1472,7 +1491,22 @@ legislature's own website.
 - `CollectorJob` table unifying scheduled *and* manually-triggered runs
   into one history. Also replaces the informal "last-successful-poll"
   health tracking from "Data collector architecture" — that's now just
-  "the most recent succeeded `CollectorJob`."
+  "the most recent succeeded `CollectorJob`." First full field-level
+  definition (referenced by name elsewhere in this doc since Stage 2.5's
+  original draft, never actually specified until now):
+  ```
+  CollectorJob
+   ├── collector_id
+   ├── trigger_type     — 'scheduled' | 'manual'
+   ├── triggered_by     — admin identity, for manual runs only
+   ├── requested_at
+   ├── started_at        — nullable
+   ├── finished_at        — nullable
+   ├── status             — 'pending' | 'running' | 'succeeded' | 'failed'
+   └── result_summary     — jsonb (e.g. `{itemsCollected, flagged, errors}`),
+                             not a plain string — lets the admin GUI render
+                             structured stats instead of parsing free text
+  ```
 - Worker service's job loop checks this table for pending
   manually-triggered jobs every tick, alongside its own cron schedule —
   the admin GUI's "run now" writes a `pending` row, the worker picks it
