@@ -41,4 +41,21 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run db:migrate
+      # Snapshot chain is internally consistent...
+      - run: npm run db:check
+      # ...and the committed migrations match src/db/schema/*.ts: a schema
+      # edit with no regenerated migration makes generate emit a new file,
+      # which shows up here as an untracked/changed path. (Not `git diff`,
+      # which ignores untracked files.)
+      - name: Migrations are up to date with the schema
+        run: |
+          npm run db:generate
+          test -z "$(git status --porcelain src/db/migrations)" || {
+            echo "::error::Schema and migrations have drifted — regenerate (see CLAUDE.md)."
+            git status --porcelain src/db/migrations
+            exit 1
+          }
+      # Tests create and migrate their own <name>_test database; see
+      # vitest.global-setup.mts.
       - run: npm run test
+      - run: npm run build

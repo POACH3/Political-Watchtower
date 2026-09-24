@@ -1,25 +1,45 @@
-# Stage 0: app + Postgres only. Stage 3 adds a third service (the worker)
-# once there's a real collector to run — see SPEC.md cross-cutting
-# decision #6.
+# Stage 0: app + Postgres, plus a one-shot migrate service so a clean
+# `docker compose up` gets a migrated database with no manual step. Stage
+# 3 adds the worker service once there's a real collector to run — see
+# SPEC.md cross-cutting decision #5.
+
+x-app-base: &app-base
+  build: .
+  # One tag for both services below, so the image builds once.
+  image: political-watchtower-dev
+  env_file:
+    # Optional: a fresh clone has no .env yet, and compose shouldn't refuse
+    # to start over it (needs Compose 2.24+). The DATABASE_URL below wins
+    # over anything in .env regardless.
+    - path: .env
+      required: false
+  environment:
+    # Overrides .env's DATABASE_URL for the containerized network —
+    # "db" is this compose file's service name, not "localhost".
+    DATABASE_URL: postgresql://postgres:postgres@db:5432/political_watchtower
+  volumes:
+    - .:/app
+    - /app/node_modules
+    - /app/.next
 
 services:
-  app:
-    build: .
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env
-    environment:
-      # Overrides .env's DATABASE_URL for the containerized network —
-      # "db" is this compose file's service name, not "localhost".
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/political_watchtower
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/.next
+  migrate:
+    <<: *app-base
+    command: ["npm", "run", "db:migrate"]
+    restart: "no"
     depends_on:
       db:
         condition: service_healthy
+
+  app:
+    <<: *app-base
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   db:
     image: postgres:16-alpine

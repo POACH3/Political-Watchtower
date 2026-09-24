@@ -1,35 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { db } from "@/db";
-import { claimRelations, claimSources, claims, newsItems, promiseSources, promises } from "@/db/schema";
-import { createCollectedItem } from "@/lib/services/collected-items";
+import {
+  claimRelations,
+  claimSources,
+  claims,
+  newsItemSources,
+  newsItems,
+  promiseSources,
+  promises,
+} from "@/db/schema";
 import { upsertJurisdiction } from "@/lib/services/jurisdictions";
 import { upsertPoliticianByExternalId } from "@/lib/services/politicians";
-import { pgErrorMessage } from "@/lib/test-utils";
+import { makeSourceItem, pgErrorMessage } from "@/lib/test-utils";
 
-async function makeSourceItem(): Promise<string> {
-  return createCollectedItem({
-    collectorType: "manual_upload",
-    collectorId: "test",
-    sourceUrl: "https://example.com",
-    submittedBy: "test",
-    contentHash: randomUUID(),
-    contentType: "application/json",
-    rawPayload: "{}",
-  });
-}
-
+// A NewsItem can't exist without a NewsItemSource (deferred trigger), so
+// the helper writes both in one transaction.
 async function makeNewsItem(): Promise<string> {
-  const [row] = await db
-    .insert(newsItems)
-    .values({
-      platform: "news",
-      canonicalUrl: "https://example.com/article",
-      contentHash: randomUUID(),
-      headlineOrText: "Test article",
-    })
-    .returning({ id: newsItems.id });
-  return row.id;
+  const sourceItemId = await makeSourceItem();
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(newsItems)
+      .values({
+        platform: "news",
+        canonicalUrl: "https://example.com/article",
+        contentHash: randomUUID(),
+        headlineOrText: "Test article",
+      })
+      .returning({ id: newsItems.id });
+    await tx.insert(newsItemSources).values({ newsItemId: row.id, sourceItemId });
+    return row.id;
+  });
 }
 
 async function makeClaim(): Promise<string> {

@@ -10,6 +10,10 @@
       "Bash(brew install*)",
       "Bash(curl *)",
       "Bash(wget *)",
+      "Bash(git push*)",
+      "Bash(aws *)"
+    ],
+    "deny": [
       "Bash(git commit*)"
     ]
   },
@@ -21,7 +25,6 @@
           {
             "type": "command",
             "command": "node .claude/hooks/git-safety-guard.mjs",
-            "if": "Bash(git *)",
             "timeout": 10,
             "statusMessage": "Checking git safety guardrails..."
           }

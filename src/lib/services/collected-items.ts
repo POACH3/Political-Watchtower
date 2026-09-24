@@ -1,12 +1,13 @@
-// Service layer — see SPEC.md cross-cutting decision #5/#8: every module
+// Service layer — see SPEC.md cross-cutting decision #4: every module
 // (presenters, collectors, processors) calls these, never the database
 // directly. Signatures are plain/JSON-serializable on purpose, so a
 // future non-TypeScript module could reach the same logic through a thin
 // HTTP wrapper without these functions changing shape.
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { collectedItems } from "@/db/schema";
+import { hashPayload, normalizeUrl } from "@/lib/normalize";
 
 export interface CreateCollectedItemInput {
   collectorType: "manual_upload" | "api_poll" | "crawl";
@@ -14,7 +15,6 @@ export interface CreateCollectedItemInput {
   sourceUrl: string;
   submittedBy: string;
   sourceTimestamp?: string;
-  contentHash: string;
   contentType: string;
   // The original fetched text, verbatim — a raw JSON API response body,
   // raw HTML, etc. Not a JS object to be serialized here: re-serializing
@@ -26,34 +26,43 @@ export interface CreateCollectedItemInput {
 }
 
 /**
- * Returns the existing row's id on an exact-dedup hit (contentHash +
- * sourceUrl) instead of erroring or creating a duplicate — "Data
- * collector architecture" describes this check as the aggregator's job;
- * previously this was a bare INSERT with no dedup logic at all.
+ * Returns the existing row's id on an exact-dedup hit instead of
+ * erroring or creating a duplicate — "Data collector architecture"
+ * describes this check as the aggregator's job.
+ *
+ * The dedup key is (sha-256 of rawPayload, normalized sourceUrl). Both
+ * halves are computed here, not trusted from the caller: a caller-supplied
+ * hash could silently disagree with the payload it's supposed to be an
+ * integrity check over.
  */
 export async function createCollectedItem(input: CreateCollectedItemInput): Promise<string> {
-  const [row] = await db
+  const contentHash = hashPayload(input.rawPayload);
+  const sourceUrl = normalizeUrl(input.sourceUrl);
+
+  const [inserted] = await db
     .insert(collectedItems)
     .values({
       collectorType: input.collectorType,
       collectorId: input.collectorId,
-      sourceUrl: input.sourceUrl,
+      sourceUrl,
       submittedBy: input.submittedBy,
       sourceTimestamp: input.sourceTimestamp ? new Date(input.sourceTimestamp) : undefined,
-      contentHash: input.contentHash,
+      contentHash,
       contentType: input.contentType,
       rawPayload: input.rawPayload,
     })
-    .onConflictDoUpdate({
-      target: [collectedItems.contentHash, collectedItems.sourceUrl],
-      // No-op update (touches nothing) rather than DO NOTHING, purely so
-      // `.returning()` still yields a row on a dedup hit — Postgres
-      // doesn't return anything for a skipped DO NOTHING conflict.
-      set: { contentHash: sql`${collectedItems.contentHash}` },
-    })
+    // DO NOTHING rather than a no-op DO UPDATE: the latter rewrites the
+    // row (dead tuple + `updated_at` bump) on every unchanged re-poll.
+    // A dedup hit returns nothing, so fall through to a select — under
+    // READ COMMITTED that sees a concurrent writer's committed row.
+    .onConflictDoNothing({ target: [collectedItems.contentHash, collectedItems.sourceUrl] })
     .returning({ id: collectedItems.id });
 
-  return row.id;
+  if (inserted) return inserted.id;
+
+  const existing = await findCollectedItemByHash(contentHash, sourceUrl);
+  if (!existing) throw new Error("collected_items conflict reported but no existing row found");
+  return existing;
 }
 
 export async function findCollectedItemByHash(
@@ -63,7 +72,9 @@ export async function findCollectedItemByHash(
   const [row] = await db
     .select({ id: collectedItems.id })
     .from(collectedItems)
-    .where(and(eq(collectedItems.contentHash, contentHash), eq(collectedItems.sourceUrl, sourceUrl)))
+    .where(
+      and(eq(collectedItems.contentHash, contentHash), eq(collectedItems.sourceUrl, normalizeUrl(sourceUrl))),
+    )
     .limit(1);
 
   return row?.id ?? null;

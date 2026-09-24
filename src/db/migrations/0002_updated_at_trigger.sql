@@ -78,6 +78,15 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON vote_records
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+--> statement-breakpoint
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON committees
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+--> statement-breakpoint
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON committee_memberships
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+--> statement-breakpoint
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON meetings
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
 -- Stage 2 tables (0001_narrative_oversight_schema.sql)
@@ -123,4 +132,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON promise_relations
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON promise_evidence
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+--> statement-breakpoint
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON processor_runs
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();

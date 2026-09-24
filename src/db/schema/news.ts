@@ -3,36 +3,48 @@
 // government-records schema — see "Staging notes".
 
 import { sql } from "drizzle-orm";
-import { boolean, check, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
-import { idColumn, timestampColumns } from "./_shared";
+import { boolean, check, index, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { idColumn, suppressionConsistentCheck, timestampColumns } from "./_shared";
 import { collectedItems } from "./collected-items";
 import { politicians } from "./people";
 
 export const platformEnum = pgEnum("platform", ["news", "x", "facebook", "instagram", "rss", "other"]);
 
-export const newsItems = pgTable("news_items", {
-  ...idColumn,
-  platform: platformEnum("platform").notNull(),
-  // The article/post's own URL — distinct from whatever
-  // CollectedItem.sourceUrl the fetch came through (a GDELT-sourced
-  // item's fetch URL is a GDELT record, not the article itself).
-  canonicalUrl: text("canonical_url").notNull(),
-  // The item's own publication time — distinct from any one
-  // CollectedItem's retrievedTimestamp (when *we* fetched it).
-  publishedAt: timestamp("published_at", { withTimezone: true }),
-  // For exact-dedup, checked by the aggregator before writing a new row.
-  contentHash: text("content_hash").notNull(),
-  authorName: text("author_name"),
-  authorHandle: text("author_handle"),
-  headlineOrText: text("headline_or_text").notNull(),
-  // A short quote, not a full-text mirror — see provenance-storage
-  // decision in "Claim-preserving content model".
-  excerpt: text("excerpt"),
-  isSuppressed: boolean("is_suppressed").notNull().default(false),
-  suppressedAt: timestamp("suppressed_at", { withTimezone: true }),
-  suppressionReason: text("suppression_reason"),
-  ...timestampColumns,
-});
+export const newsItems = pgTable(
+  "news_items",
+  {
+    ...idColumn,
+    platform: platformEnum("platform").notNull(),
+    // The article/post's own URL — distinct from whatever
+    // CollectedItem.sourceUrl the fetch came through (a GDELT-sourced
+    // item's fetch URL is a GDELT record, not the article itself).
+    canonicalUrl: text("canonical_url").notNull(),
+    // The item's own publication time — distinct from any one
+    // CollectedItem's retrievedTimestamp (when *we* fetched it).
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    // For exact-dedup, checked by the aggregator before writing a new row.
+    contentHash: text("content_hash").notNull(),
+    authorName: text("author_name"),
+    authorHandle: text("author_handle"),
+    headlineOrText: text("headline_or_text").notNull(),
+    // A short quote, not a full-text mirror — see provenance-storage
+    // decision in "Claim-preserving content model".
+    excerpt: text("excerpt"),
+    isSuppressed: boolean("is_suppressed").notNull().default(false),
+    suppressedAt: timestamp("suppressed_at", { withTimezone: true }),
+    suppressionReason: text("suppression_reason"),
+    ...timestampColumns,
+  },
+  (table) => [
+    // The exact-dedup key the aggregator checks before writing a row
+    // (SPEC.md "Deduplication and entity resolution") — without it,
+    // nothing stopped the same item being written twice. canonical_url
+    // is normalized by the service before it gets here.
+    unique().on(table.contentHash, table.canonicalUrl),
+    suppressionConsistentCheck("news_items_suppression_consistent", table),
+    index("news_items_published_at_idx").on(table.publishedAt),
+  ],
+);
 // No duplicate_of column — see SPEC.md: it was a third, contradictory
 // dedup mechanism on top of this contentHash check and NewsItemRelation
 // below; one mechanism, not two.
@@ -49,8 +61,16 @@ export const newsItemSources = pgTable(
       .references(() => collectedItems.id),
     ...timestampColumns,
   },
-  (table) => [unique().on(table.newsItemId, table.sourceItemId)],
+  (table) => [
+    unique().on(table.newsItemId, table.sourceItemId),
+    // Reverse lookup: "what derives from this collected item."
+    index("news_item_sources_source_item_idx").on(table.sourceItemId),
+  ],
 );
+// A deferred constraint trigger (migrations/0001) guarantees every
+// news_items row has at least one row here, so a NewsItem can't exist
+// with no provenance. There's no `relation` column, so "at least one" is
+// the only rule expressible (unlike claim_sources' exactly-one-primary).
 
 export const newsItemRelationTypeEnum = pgEnum("news_item_relation_type", [
   "exact_duplicate",
@@ -102,5 +122,9 @@ export const newsItemPoliticians = pgTable(
     locked: boolean("locked").notNull().default(false),
     ...timestampColumns,
   },
-  (table) => [unique().on(table.newsItemId, table.politicianId)],
+  (table) => [
+    unique().on(table.newsItemId, table.politicianId),
+    // "Items mentioning this politician" — the profile page's access path.
+    index("news_item_politicians_politician_idx").on(table.politicianId),
+  ],
 );

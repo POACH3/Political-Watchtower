@@ -32,6 +32,10 @@ export const collectedItems = pgTable(
     // response is stored as its original response text, not a
     // re-serialized jsonb value; the aggregator parses it when it needs
     // structure.
+    // Caveat: Postgres `text` can't hold \u0000 either (only jsonb's
+    // rejection was the *documented* problem) — a collector that fetches
+    // content containing NUL bytes has to strip or reject them before
+    // this insert, or store a stored-file reference instead.
     rawPayload: text("raw_payload").notNull(),
     intakeStatus: intakeStatusEnum("intake_status").notNull().default("pending"),
     // An admin's call on a flagged item survives the next validation pass

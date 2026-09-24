@@ -8,6 +8,32 @@ import type { collectorTypeEnum } from "@/db/schema";
 export type CollectorType = (typeof collectorTypeEnum.enumValues)[number];
 
 /**
+ * The verbatim source a batch of records was parsed from — everything
+ * `createCollectedItem` needs (besides who collected it) to write the
+ * `CollectedItem` provenance row every government-record row's
+ * `source_item` points at. `rawPayload` is the original response text,
+ * never a re-serialized object (see SPEC.md "Provenance envelope").
+ */
+export interface SourceSnapshot {
+  sourceUrl: string;
+  contentType: string;
+  rawPayload: string;
+  sourceTimestamp?: string; // ISO timestamp, when the source says it was published
+}
+
+/**
+ * One fetch's output: the records parsed out of it, plus the snapshot they
+ * came from. Collectors never touch the database — the aggregator writes
+ * one `CollectedItem` per `Collected` batch and stamps every record in it
+ * with that row's id as its `source_item`. Collectors return one batch per
+ * underlying HTTP response/upload/feed item.
+ */
+export interface Collected<T> {
+  snapshot: SourceSnapshot;
+  records: T[];
+}
+
+/**
  * Fetches raw data from one source. `JurisdictionAdapter` (see
  * jurisdiction-adapter.ts) is the concrete shape of this for
  * government-API collectors specifically; Stage 8's RSS/GDELT/oEmbed
@@ -17,7 +43,7 @@ export type CollectorType = (typeof collectorTypeEnum.enumValues)[number];
 export interface Collector<TOutput = unknown> {
   readonly collectorId: string;
   readonly collectorType: CollectorType;
-  collect(): Promise<TOutput[]>;
+  collect(): Promise<Collected<TOutput>[]>;
 }
 
 /**
@@ -27,7 +53,7 @@ export interface Collector<TOutput = unknown> {
  * class — this interface exists so the contract is explicit and typed.
  */
 export interface Aggregator<TInput = unknown> {
-  aggregate(items: TInput[]): Promise<void>;
+  aggregate(batches: Collected<TInput>[]): Promise<void>;
 }
 
 /**

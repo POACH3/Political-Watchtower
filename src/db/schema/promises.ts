@@ -5,6 +5,7 @@ import {
   boolean,
   check,
   date,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -19,6 +20,7 @@ import { collectedItems } from "./collected-items";
 import { bills, issueAreas } from "./legislation";
 import { newsItems } from "./news";
 import { politicians } from "./people";
+import { processorRuns } from "./processor-runs";
 import { votes } from "./votes";
 
 // A politician's self-reported/campaign priorities, linked to the same
@@ -44,36 +46,63 @@ export const politicianPriorityIssues = pgTable(
   },
   // A politician shouldn't have the same issue area listed twice as a
   // priority — same reasoning as BillIssueArea's uniqueness constraint.
-  (table) => [unique().on(table.politicianId, table.issueAreaId)],
+  (table) => [
+    unique().on(table.politicianId, table.issueAreaId),
+    index("politician_priority_issues_issue_area_idx").on(table.issueAreaId),
+  ],
 );
 
+// Deliberately evidence-framed, not verdict-framed — "evidence_of_completion,"
+// not "fulfilled"; the site reports what the evidence shows rather than
+// adjudicating whether a promise was kept. See SPEC.md "Promise".
 export const fulfillmentStatusEnum = pgEnum("fulfillment_status", [
+  "not_assessed",
   "not_yet_due",
   "in_progress",
-  "fulfilled",
-  "broken",
-  "partially_fulfilled",
   "stalled",
+  "evidence_of_completion",
+  "evidence_of_partial_completion",
+  "evidence_against_completion",
+  "disputed",
 ]);
 
-export const promises = pgTable("promises", {
-  ...idColumn,
-  politicianId: uuid("politician_id")
-    .notNull()
-    .references(() => politicians.id),
-  // Required — this is the promise; a Promise row without it has no
-  // content, same reasoning as Politician.fullName or Claim.exactText.
-  exactText: text("exact_text").notNull(),
-  issueAreaId: uuid("issue_area_id").references(() => issueAreas.id),
-  // Nullable — descriptive, not identifying (same principle applied to
-  // Bill.introducedDate).
-  dateMade: date("date_made"),
-  // If the promise itself named a deadline (e.g. "by end of my first term").
-  targetDate: date("target_date"),
-  fulfillmentStatus: fulfillmentStatusEnum("fulfillment_status").notNull().default("not_yet_due"),
-  fulfillmentLocked: boolean("fulfillment_locked").notNull().default(false),
-  ...timestampColumns,
-});
+export const promises = pgTable(
+  "promises",
+  {
+    ...idColumn,
+    politicianId: uuid("politician_id")
+      .notNull()
+      .references(() => politicians.id),
+    // Required — this is the promise; a Promise row without it has no
+    // content, same reasoning as Politician.fullName or Claim.exactText.
+    exactText: text("exact_text").notNull(),
+    issueAreaId: uuid("issue_area_id").references(() => issueAreas.id),
+    // Nullable — descriptive, not identifying (same principle applied to
+    // Bill.introducedDate).
+    dateMade: date("date_made"),
+    // If the promise itself named a deadline (e.g. "by end of my first term").
+    targetDate: date("target_date"),
+    // What "delivered" would concretely look like for this promise,
+    // distinct from exactText (the promise as stated). Filled in by
+    // whichever layer first assesses it.
+    measurableCriterion: text("measurable_criterion"),
+    fulfillmentStatus: fulfillmentStatusEnum("fulfillment_status").notNull().default("not_assessed"),
+    // Why fulfillmentStatus is what it is — makes a status change
+    // explainable on the page itself, not just inferable from the linked
+    // PromiseEvidence rows.
+    assessmentReasoning: text("assessment_reasoning"),
+    fulfillmentLocked: boolean("fulfillment_locked").notNull().default(false),
+    // Which processor pass last assessed this row; version/model are
+    // derivable through the join.
+    processorRunId: uuid("processor_run_id").references(() => processorRuns.id),
+    ...timestampColumns,
+  },
+  (table) => [
+    index("promises_politician_idx").on(table.politicianId),
+    index("promises_issue_area_idx").on(table.issueAreaId),
+    index("promises_processor_run_idx").on(table.processorRunId),
+  ],
+);
 
 export const promiseSourceRelationEnum = pgEnum("promise_source_relation", ["primary", "supporting"]);
 
@@ -99,6 +128,8 @@ export const promiseSources = pgTable(
       .on(table.promiseId)
       .where(sql`${table.relation} = 'primary'`),
     unique().on(table.promiseId, table.sourceItemId),
+    // Reverse lookup: "what derives from this collected item."
+    index("promise_sources_source_item_idx").on(table.sourceItemId),
   ],
 );
 
@@ -154,6 +185,32 @@ export const promiseEvidence = pgTable(
       "promise_evidence_exactly_one_target",
       sql`num_nonnulls(${table.billId}, ${table.voteId}, ${table.newsItemId}, ${table.claimId}) = 1`,
     ),
-    unique().on(table.promiseId, table.billId, table.voteId, table.newsItemId, table.claimId),
+    // One partial unique index per arc, not one UNIQUE over all four
+    // nullable FKs: a plain UNIQUE treats NULLs as distinct, so the
+    // combined key could never fire and the same evidence could be
+    // attached to a promise any number of times. `supports` is
+    // deliberately not part of any key — one evidence item has one stance
+    // per promise, updated in place, so the same bill can't be both
+    // 'fulfillment' and 'non_fulfillment'. Each index doubles as the
+    // (promise, target) lookup.
+    uniqueIndex("promise_evidence_bill_uq")
+      .on(table.promiseId, table.billId)
+      .where(sql`${table.billId} IS NOT NULL`),
+    uniqueIndex("promise_evidence_vote_uq")
+      .on(table.promiseId, table.voteId)
+      .where(sql`${table.voteId} IS NOT NULL`),
+    uniqueIndex("promise_evidence_news_item_uq")
+      .on(table.promiseId, table.newsItemId)
+      .where(sql`${table.newsItemId} IS NOT NULL`),
+    uniqueIndex("promise_evidence_claim_uq")
+      .on(table.promiseId, table.claimId)
+      .where(sql`${table.claimId} IS NOT NULL`),
+    // Reverse lookups: "which promises cite this bill/vote/...".
+    index("promise_evidence_bill_idx").on(table.billId).where(sql`${table.billId} IS NOT NULL`),
+    index("promise_evidence_vote_idx").on(table.voteId).where(sql`${table.voteId} IS NOT NULL`),
+    index("promise_evidence_news_item_idx")
+      .on(table.newsItemId)
+      .where(sql`${table.newsItemId} IS NOT NULL`),
+    index("promise_evidence_claim_idx").on(table.claimId).where(sql`${table.claimId} IS NOT NULL`),
   ],
 );

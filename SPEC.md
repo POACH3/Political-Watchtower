@@ -16,7 +16,7 @@ The codebase must stay jurisdiction-agnostic enough that someone in another
 state or country can point it at their own legislature with minimal changes
 — this drives the "jurisdiction adapter" architecture in Stage 1.
 
-**Explicitly not:** a partisan advocacy tool.
+**Explicitly not:** a partisan advocacy tool or a monetization strategy. (No data sold, ever)
 
 **Editorial stance:** maximize automation, but automation only applies
 *publish-without-review*, not *publish-as-fact*. There are two categories
@@ -30,12 +30,10 @@ of content, treated differently:
   asserted as true by the site itself. Every claim carries its own
   `verification_status` (see "Claim-preserving content model" below) —
   that's structured, per-item metadata, not a footer disclaimer doing the
-  work. The one sitewide disclaimer/methodology page you asked for still
-  exists, and still explains things once rather than repeating paragraphs
-  everywhere — but it now sits alongside compact per-claim status labels,
-  not instead of them. That reconciles with your original "disclaimer
-  once, prominently" call: the *explanation* is centralized, the
-  *evidence trail* is not.
+  work. The sitewide disclaimer/methodology page explains things once
+  rather than repeating paragraphs everywhere, and sits alongside
+  compact per-claim status labels, not instead of them — the
+  *explanation* is centralized, the *evidence trail* is not.
 
 *(This split — and everything in "Claim-preserving content model" below —
 is a product/engineering response to real defamation exposure in
@@ -45,6 +43,40 @@ before Stage 8-10 ship publicly, since those are the stages introducing
 third-party claims about real people at any volume. Not blocking Stages
 0-7, which are government-records-only.)*
 
+**The two-category split above is the load-bearing summary; here's the
+fuller breakdown it collapses, spelled out once so nothing in it gets
+conflated in practice:**
+
+- **Raw facts** — votes, bill text, dates, sponsorships, appointments.
+  Government records, published as fact, no `verification_status`.
+- **Derived facts** — a *computed* statement about raw facts ("voted yes
+  on 17 bills tagged Privacy"). Never stored as its own row/fact — always
+  recomputed at query time from the raw facts underneath it (see
+  "Provenance chain & processor accountability" below). This is what
+  keeps a derived number honest: it can't drift from what actually backs
+  it, because it isn't cached as an independent assertion.
+- **AI-generated summaries** — `Claim.generated_summary` and the Stage 12
+  profile-activity summary. Explicitly labeled as generated (the
+  disclaimer badge), and grounded in specific rows, never freestanding
+  prose.
+- **Human/community claims** — `Claim`/`Affiliation`, explicitly
+  attributed to whoever said it (`claimant_text`) or submitted it
+  (`CommunityFlag.submitted_by`), never to "the site."
+- **Editorial classifications** — `IssueArea`/`BillIssueArea` tagging.
+  Structured and challengeable (see "Facts vs. interpretations" note in
+  "Provenance chain" below), not asserted as objective truth about what
+  a bill "is really about."
+- **Verification status** — `Claim`/`Affiliation.verification_status`,
+  `Promise.fulfillment_status`: unverified/corroborated/disputed/
+  verified-shaped, never a bare true/false.
+
+The one discipline this taxonomy exists to enforce: an AI-generated
+interpretation (a summary, a classification) must never silently become
+a stored raw fact. Concretely, that means a processor never writes
+directly to a field with no `verification_status`/`fulfillment_status`/
+equivalent alongside it, and derived facts stay computed, never cached
+as their own claimable row.
+
 ---
 
 ## Cross-cutting architecture decisions
@@ -52,14 +84,14 @@ third-party claims about real people at any volume. Not blocking Stages
 These apply to every stage below, so confirming them once now avoids
 re-litigating per stage:
 
-1. **No IaC.** Per your steer, we avoid CDK/Terraform/CloudFormation. The
-   app is a portable, containerized (Docker) service deployable via
+1. **No IaC.** The app avoids CDK/Terraform/CloudFormation, staying a
+   portable, containerized (Docker) service deployable via
    `docker compose` for self-hosting, or manually to AWS (App Runner,
    Amplify Hosting, or ECS via console) or any other Docker-friendly host
    (Fly.io, Render, Railway) — no vendor lock-in, consistent with "broad
    applicability."
 2. **Framework: Next.js (or similar full-stack React framework), Postgres
-   database.** [DECISION TO CONFIRM] I'm recommending this over alternatives
+   database.** [DECISION TO CONFIRM] Recommended over alternatives
    because: (a) it's a single deployable unit — no separate frontend/backend
    repos to keep in sync, which matters for a project other people will
    fork; (b) the comparison/scorecard features (Stage 6) need real
@@ -70,9 +102,11 @@ re-litigating per stage:
    SQLite is the fallback if you'd rather start with zero external
    dependencies for local dev — happy to use it for Stages 0-3 and swap
    later if that's preferred, but Postgres is the better default given the
-   comparison-heavy feature set.
-3. **Four-layer modular pipeline** (see [README.md](README.md) "How it's
-   structured" for the canonical description — terminology here matches
+   comparison-heavy feature set. **Minimum Postgres 15**: the schema uses
+   `UNIQUE ... NULLS NOT DISTINCT` (Postgres 15+) and `btree_gist`;
+   local dev and CI run 16.
+3. **Four-layer modular pipeline** (see [README.md](README.md) "Structure"
+   for the canonical description — terminology here matches
    it exactly):
    - **Data collectors** — one module per data source (a jurisdiction's
      government API, an RSS feed, a social platform's oEmbed integration,
@@ -100,13 +134,12 @@ re-litigating per stage:
    The core app only knows about these four interfaces, never the
    specifics of any one source/processor/view — that's what makes "point
    it at your own state" and "add/remove a comparison view" both realistic
-   for other adopters, per your build-to-be-forked goal.
-5. **Every module — presenters, collectors, and processors alike — calls
-   shared service functions, never the database directly.** Originally
-   scoped to presenters only (Next.js makes it easy to query Postgres
-   inline from a Server Component, which quietly turns the UI layer into
-   the only place an API contract exists); broadened to cover the worker
-   service too once it became clear the same risk applies there — two
+   for other adopters, per the build-to-be-forked goal.
+4. **Every module — presenters, collectors, and processors alike — calls
+   shared service functions, never the database directly.** Applies to
+   presenters and the worker service alike: Next.js makes it easy to
+   query Postgres inline from a Server Component, which quietly turns
+   the UI layer into the only place an API contract exists, and two
    separate processes each independently reimplementing "how to safely
    write a `Claim`" (lock checks, suppression rules, the "exactly one
    primary source" invariant) is the same kind of drift risk regardless
@@ -116,9 +149,9 @@ re-litigating per stage:
    one shared package of named functions, never inline queries anywhere.
    Starting in Stage 5 for presenters (first real pages) and Stage 3 for
    collectors/the worker service, not something to retrofit later. See
-   decision #8 for how this same service layer stays reachable if a
+   decision #7 for how this same service layer stays reachable if a
    future module isn't TypeScript.
-6. **Collectors run in a dedicated worker service, not the web app
+5. **Collectors run in a dedicated worker service, not the web app
    process.** Scheduled API polling and the long-running news/social
    crawler both live in their own Docker Compose service, separate from
    the Next.js app — a crawl hang or scheduling bug shouldn't be able to
@@ -126,14 +159,14 @@ re-litigating per stage:
    resource-heavy background work (crawling, and any NLP/ML processors)
    off the request/response path. Details in "Data collector
    architecture" below.
-7. **Collector types are independently config-enabled, not fixed by the
+6. **Collector types are independently config-enabled, not fixed by the
    codebase.** Which of the three types (manual upload, API poller,
    crawler) actually run is a per-deployment choice — down to running
    manual upload alone, with every automated collector disabled. See "Data
    collector architecture" below for why this matters beyond flexibility
    for its own sake (jurisdictions without a usable API; operators who
    don't want the crawler's cost/legal surface).
-8. **Everything is TypeScript by default; a future non-TypeScript module
+7. **Everything is TypeScript by default; a future non-TypeScript module
    is an option kept open, not something built now.** Considered running
    some processors in Python (its NLP/ML ecosystem is genuinely stronger
    for entity-resolution upgrades, semantic similarity, and sentiment
@@ -154,7 +187,35 @@ re-litigating per stage:
    rule (e.g. the prompt-injection defense) has to be gotten right twice
    instead of once.
 
-   What decision #5's service layer buys, concretely: because every
+8. **Real accounts with roles, not a single shared admin credential.**
+   One `User` table, one `role` column (`'user'` | `'admin'`), ordinary
+   session auth — needed because Stage 16's community flagging requires
+   login-gated public accounts, and "promote a user to admin" only means
+   something if "user" is a real row. Doesn't block Stage 4-15 — a
+   single self-registered admin account on day one is operationally
+   equivalent to a single shared credential until Stage 16 adds public
+   signups.
+9. **Abuse resistance is a design property, not a Stage 16 feature.**
+    Three distinct threats, already mitigated by decisions made earlier
+    for other reasons, called out explicitly here so "resistant to
+    abuse" has a real answer instead of being aspirational:
+    - **SQL injection** — every query goes through Drizzle's parameterized
+      query builder (decision #4's service layer is the only DB access
+      path); no raw string-concatenated SQL anywhere in the app.
+    - **XSS** — covered under "Validation" below: scraped/submitted text
+      and HTML is sanitized on the way in, before storage, not only on
+      render.
+    - **Prompt injection** — covered under "Validation" below
+      ("Defamation-resistant pipeline") for claim extraction specifically;
+      the same discipline (collected text passed to an LLM as
+      clearly-delimited data, never concatenated as if part of the
+      instructions) applies to *every* LLM call this app makes, including
+      Stage 12's profile-activity summaries added below — not just claim
+      extraction. A prompt-injection payload succeeding against a
+      *summary* is just as much a defamation-pipeline failure as one
+      succeeding against `verification_status`.
+
+   What decision #4's service layer buys, concretely: because every
    module already goes through shared service functions instead of raw
    queries, staying flexible costs nothing today. A same-runtime
    (TypeScript) module calls those functions directly, in-process — no
@@ -324,7 +385,7 @@ legitimate crawler, and useful if a site operator wants to reach out).
 
 **Where this runs:** collectors' scheduled jobs and the crawler both live
 in a dedicated worker service (its own Docker Compose container), not
-inside the Next.js app process — see cross-cutting decision #6.
+inside the Next.js app process — see cross-cutting decision #5.
 In-process job scheduling (e.g. `node-cron`) inside that worker, not an
 external cron daemon or a cloud-specific scheduler (AWS EventBridge,
 etc.) — the latter would reintroduce the cloud lock-in the no-IaC
@@ -379,9 +440,16 @@ that processor's own later run. This isn't just documentation — it's the
 so it's obvious from the schema itself, not just from prose elsewhere,
 that (say) the aggregator has no business writing `mentioned_politicians`.
 
-Not included here: `Claim` (processor output — already fully specified in
-"Claim-preserving content model" below) and `CollectorJob` (Stage 4's
-worker/admin-GUI bookkeeping, not part of the public data model).
+Not included in this section: `Claim` and its join tables (processor
+output — fully specified in "Claim-preserving content model" below, built
+in Stage 2), `Affiliation`/`AffiliationSource` (same section; not built
+until Stage 10), `ProcessorRun` (built in Stage 2) and `PipelineEvent`
+(not built until Stage 9/10) — both in "Provenance chain & processor
+accountability" — and `CollectorJob`/`User`/`ProfileSummary`/
+`CommunityFlag` (Stage 4/4/12/16 — worker/admin-GUI bookkeeping, auth,
+and the public flagging flow, not part of the government-records data
+model). Each is scheduled in its own stage's Build list below; none of
+them exists as a table yet unless that stage is marked done.
 
 **Two implementation details that apply to every join table below, called
 out once here instead of repeated per table:**
@@ -391,6 +459,31 @@ out once here instead of repeated per table:**
   actually depends on), and `VoteRecord`/`BillSponsor` need `UNIQUE` on
   their politician+parent-row pair (one politician can't have two votes
   on the same roll call, or two sponsor rows on the same bill).
+- **Nullable columns inside a `UNIQUE`** need `NULLS NOT DISTINCT` (or
+  one partial unique index per arm), because Postgres otherwise treats
+  NULLs as distinct and the constraint silently never fires — `Election`
+  (nullable chamber/district) and `Meeting` (exactly one of
+  committee/chamber is always NULL) use `NULLS NOT DISTINCT`;
+  `PromiseEvidence`/`ClaimResponse` (exclusive arcs) use per-arm partial
+  indexes.
+- **Cross-table consistency is enforced by the database, not by
+  convention.** Where a row references two tables that must agree, it's a
+  composite FK against a `UNIQUE (id, x)` on the target: a `Term`'s
+  district must be in the term's chamber, and its candidacy must be the
+  same politician's; an `Election`/`Committee`'s chamber must belong to
+  its jurisdiction, and an `Election`'s district to its chamber; a
+  `Vote`'s bill must belong to the vote's own session. Composite FKs are
+  `MATCH SIMPLE` (skipped when any column is NULL), which is exactly right
+  for the nullable arms (procedural votes, statewide races, no tracked
+  candidacy); the one hole — a district with no chamber — is closed by a
+  `CHECK`. Not enforced: a `Vote`'s chamber against its session's
+  jurisdiction (no jurisdiction column to compare, and one adapter serves
+  one jurisdiction) — covered by aggregator/service tests instead.
+- **Date-range CHECKs:** `LegislativeSession.end_date >= start_date`,
+  `District.valid_to >= valid_from`, and `Term.end_date > start_date`
+  (strictly — the `Term` exclusion constraint treats a term as the
+  half-open range `[start, end)`, and an empty range would never
+  conflict with anything).
 - **Self-referential relation tables** (`ClaimRelation`, `PromiseRelation`,
   `NewsItemRelation` — `X_a_id`/`X_b_id` pairs) need a canonicalization
   rule (e.g. always store with the lexicographically smaller ID first) so
@@ -421,20 +514,19 @@ out once here instead of repeated per table:**
 
 ### Jurisdictions & elections
 
-Added after an independent review surfaced that `jurisdiction_id` and
-`chamber` were free-form strings on five different tables with no backing
-table — which makes the `UNIQUE (jurisdiction_id, external_id)` constraint
-on `PoliticianExternalId` meaningless in practice (one collector writes
-`"CA"`, another writes `"california"`, and dedup silently fails). Also closes a
-real scope gap: a first-time challenger who's never held office had
-nowhere to exist in the schema except as a bare, contextless `Politician`
-row — `Election`/`Candidacy` below is what actually represents "ran for
-this seat," independent of whether they won.
+`Jurisdiction`/`Chamber` back every other table's jurisdiction/chamber
+reference with a real FK rather than a free-form string — without it,
+`UNIQUE (jurisdiction_id, external_id)` on `PoliticianExternalId` can't
+actually dedup (one collector writes `"CA"`, another writes
+`"california"`). `Election`/`Candidacy` also represent a first-time
+challenger who's never held office — a bare, contextless `Politician`
+row otherwise has nowhere to record "ran for this seat," independent of
+whether they won.
 
 ```
 Jurisdiction
  ├── slug              — stable identifier every FK below actually uses
- │                        (e.g. 'ut', 'us-congress') — not a display string
+ │                        (e.g. 'xx-state', 'us-congress') — not a display string
  ├── name
  ├── level              — 'federal' | 'state' | 'local' | 'other'
  └── parent_jurisdiction_id — nullable, FK → Jurisdiction (e.g. a county
@@ -533,6 +625,71 @@ uses to create the corresponding `Term` — `Term` gets a nullable
 to the specific race that put them there, without `Candidacy` and `Term`
 duplicating the same data.
 
+### Committees & meetings
+
+The pilot state's API exposes committee membership and a meeting/floor
+calendar as first-class JSON feeds, the same primary-source-no-review-
+gate category as everything else in this section.
+
+```
+Committee
+ ├── jurisdiction_id     — FK → Jurisdiction                    [aggregator]
+ ├── chamber_id          — nullable, FK → Chamber (null for a joint/
+ │                          interim committee spanning both chambers)
+ │                                                                [aggregator]
+ ├── external_committee_id — the jurisdiction's own identifier   [aggregator]
+ ├── name                                                        [aggregator]
+ └── source_item         — FK → CollectedItem, required          [aggregator]
+```
+`UNIQUE (jurisdiction_id, external_committee_id)`.
+
+```
+CommitteeMembership                — join table; membership has its own
+                                      attribute (role), so it's not a bare
+                                      many-to-many, same pattern as
+                                      BillSponsor
+ ├── committee_id        — FK → Committee                        [aggregator]
+ ├── politician_id       — FK → Politician                       [aggregator]
+ ├── role                — nullable; e.g. 'chair' | 'vice_chair' | 'member'
+ │                          (jurisdiction-defined, kept loose rather than a
+ │                          fixed enum until a second jurisdiction's data
+ │                          shows what's actually portable)     [aggregator]
+ └── source_item         — FK → CollectedItem, required          [aggregator]
+```
+`UNIQUE (committee_id, politician_id)`.
+
+```
+Meeting                            — a scheduled committee meeting or
+                                      chamber floor time; covers both the
+                                      pilot state API's meeting-calendar
+                                      and floor-calendar feeds, which
+                                      are the same underlying concept
+                                      (a scheduled session) with different
+                                      filters, not two different entities
+ ├── committee_id        — nullable, FK → Committee (null for a chamber
+ │                          floor session, which isn't any one committee's)
+ │                                                                [aggregator]
+ ├── chamber_id          — nullable, FK → Chamber (set when committee_id
+ │                          isn't — a floor time belongs to one chamber)
+ │                                                                [aggregator]
+ ├── external_meeting_id — the jurisdiction's own identifier      [aggregator]
+ ├── scheduled_at                                                 [aggregator]
+ ├── location            — nullable; text, not a structured address — a
+ │                          committee room name isn't geocodable data
+ │                          worth a real address model                [aggregator]
+ ├── agenda_url           — nullable, link not full-text mirror (same
+ │                          copyright-conscious call as bill full text)
+ │                                                                [aggregator]
+ └── source_item         — FK → CollectedItem, required          [aggregator]
+```
+`UNIQUE (committee_id, chamber_id, external_meeting_id)` — both FK
+columns are part of the key (rather than just `external_meeting_id`)
+since the same external ID could otherwise collide across two different
+committees' feeds. `CHECK (num_nonnulls(committee_id, chamber_id) = 1)`
+— exactly one of the two, mirroring `ClaimResponse`'s exclusive-arc
+pattern, since a meeting is either one committee's or one chamber's
+floor time, never both and never neither.
+
 ### People & positions
 
 ```
@@ -572,15 +729,15 @@ PoliticianExternalId               — one entry per jurisdiction this
                                       only works if lookups are reliable,
                                       which a jsonb map doesn't guarantee
                                       the way a real unique constraint
-                                      does. A jsonb map was the original
-                                      design here; moved to its own table
-                                      specifically because the aggregator
-                                      depends on "does a Politician
-                                      already exist with external_id X in
-                                      jurisdiction Y" being a fast, correct
-                                      lookup on every poll — that's a job
-                                      for `UNIQUE (jurisdiction_id,
-                                      external_id)`, not a map scan.
+                                      does — a dedicated table, not a
+                                      jsonb map on Politician, since the
+                                      aggregator depends on "does a
+                                      Politician already exist with
+                                      external_id X in jurisdiction Y"
+                                      being a fast, correct lookup on
+                                      every poll, which needs `UNIQUE
+                                      (jurisdiction_id, external_id)`,
+                                      not a map scan.
  ├── politician_id       — FK → Politician              [aggregator]
  ├── jurisdiction_id     — FK → Jurisdiction              [aggregator]
  └── external_id                                          [aggregator]
@@ -590,10 +747,7 @@ PoliticianExternalId               — one entry per jurisdiction this
 No `party` field here — party is time-bound (rare but real: politicians
 switch parties), so it lives on `Term` below, not on the permanent
 identity. "Current party" is derived from the most recent `Term` with a
-null `end_date`, not stored redundantly. Confirmed: party is single-valued
-per term (not a set) — the plural in "party(ies)" was about change over
-time across different terms, already handled by having multiple `Term`
-rows.
+null `end_date`, not stored redundantly.
 
 Since `full_name` is required, `Term`/`BillSponsor`/`VoteRecord` rows
 that reference a `politician_id` the aggregator hasn't synced a name for
@@ -628,14 +782,14 @@ GUI), the aggregator (an official bio listing known handles), or
 `[processor: entity-resolution]` (inferred, confidence: 'inferred').
 
 ```
-Term                                — collapses Stage 1's "Office/Term"
-                                       into one entity; flagging as a
-                                       simplification, not silent scope
-                                       change — an abstract "seat held
+Term                                — one row per politician's tenure in
+                                       a specific chamber/district; no
+                                       separate abstract "seat held
                                        across all time, independent of
-                                       who's in it" concept didn't seem to
-                                       earn its keep against anything in
-                                       Stage 6's comparison views
+                                       who's in it" entity, since nothing
+                                       in this schema (including Stage
+                                       6's comparison views) needs that
+                                       concept on its own
  ├── politician_id       — FK → Politician                [aggregator]
  ├── chamber_id          — FK → Chamber (no separate jurisdiction_id — it's
  │                          redundant once chamber_id implies it)         [aggregator]
@@ -663,13 +817,35 @@ exclusion constraint.
 ### Legislation
 
 ```
-IssueArea                          — reference data, seeded once from the
-                                      fixed ~10-15 taxonomy (Stage 1), not
-                                      itself aggregator output
+IssueArea                          — reference data, seeded once, not
+                                      itself aggregator output. A
+                                      two-level hierarchy, so the radar
+                                      chart's ~10-15 broad axes and
+                                      finer-grained search both draw on
+                                      the same taxonomy at different
+                                      depths rather than two separate
+                                      systems. Same self-referential FK
+                                      pattern as `Jurisdiction.
+                                      parent_jurisdiction_id`.
+ ├── parent_issue_area_id — nullable, FK → IssueArea (null = top-level;
+ │                          e.g. "Privacy" has no parent, "Surveillance"
+ │                          has "Privacy" as its parent)
  ├── name
  ├── slug
  └── description
 ```
+Top-level areas (no parent) are the fixed ~10-15-item set the radar
+chart's axes use — still deliberately small for a readable chart.
+Second-level areas (e.g. Surveillance/Biometrics/Data retention under
+Privacy) are what a specific search like "bills involving license-plate
+readers" actually matches against, and roll up to their parent for any
+view that wants the broad axis instead. `BillIssueArea`/
+`PoliticianPriorityIssue` can point at either level — a processor or
+admin tags at whatever specificity is actually knowable, and a query
+against the parent implicitly includes its children. Legislation and
+evidence stay attached to the `Bill`/`Claim` rows regardless of which
+level tagged them, so a classification itself stays challengeable — the
+underlying bill text doesn't change if the tag turns out to be wrong.
 
 ```
 Bill                                — all fields below except
@@ -715,11 +891,11 @@ BillSponsor                        — join table; sponsorship has its own
  ├── politician_id       — FK → Politician                   [aggregator]
  ├── role                — nullable; 'primary_sponsor' | 'cosponsor' |
  │                          'other'                           [aggregator]
- └── source_item         — FK → CollectedItem, required — this was
-                            missing before; every other government-record
-                            table has one, and sponsorship is a factual
-                            assertion about a named person with no review
-                            gate, so it shouldn't be the exception  [aggregator]
+ └── source_item         — FK → CollectedItem, required — sponsorship is
+                            a factual assertion about a named person with
+                            no review gate, so it needs the same
+                            provenance every other government-record
+                            table has  [aggregator]
 ```
 `UNIQUE (bill_id, politician_id)`.
 
@@ -772,11 +948,46 @@ Promise                            — structurally similar to Claim (an
  ├── target_date         — nullable, if the promise itself named a
  │                          deadline (e.g. "by end of my first term")
  │                                                                  [aggregator]
- ├── fulfillment_status  — 'not_yet_due' | 'in_progress' | 'fulfilled' |
- │                          'broken' | 'partially_fulfilled' | 'stalled'
+ ├── measurable_criterion — nullable text; what "delivered" would
+ │                          concretely look like for this specific
+ │                          promise, distinct from `exact_text` (the
+ │                          promise as stated) — filled in by whichever
+ │                          layer first assesses the promise, not
+ │                          required at creation, since a promise is
+ │                          worth recording before anyone's worked out
+ │                          how to measure it     [processor: promise-tracking]
+ ├── fulfillment_status  — 'not_assessed' | 'not_yet_due' |
+ │                          'in_progress' | 'stalled' |
+ │                          'evidence_of_completion' |
+ │                          'evidence_of_partial_completion' |
+ │                          'evidence_against_completion' | 'disputed'.
+ │                          Deliberately evidence-framed, not verdict-
+ │                          framed — "evidence_of_completion," not
+ │                          "fulfilled." The site is reporting what the
+ │                          evidence shows, not adjudicating whether a
+ │                          promise was kept; that distinction is the
+ │                          entire point of this field, not a wording
+ │                          preference. See `PromiseEvidence` below for
+ │                          what a status is actually based on, and
+ │                          `assessment_reasoning` for why it was set.
  │                                             [processor: promise-tracking]
+ ├── assessment_reasoning — nullable text; why `fulfillment_status` is
+ │                          what it is, written by whichever layer set
+ │                          it (processor or admin) — makes a status
+ │                          change explainable on the page itself, not
+ │                          just inferable from the linked
+ │                          `PromiseEvidence` rows            [processor: promise-tracking]
  └── fulfillment_locked  — see "Review & audit" below              [admin GUI]
 ```
+[DECISION TO CONFIRM: should `evidence_of_completion`/
+`evidence_against_completion` — the two states closest to a real verdict
+— require human confirmation (`fulfillment_locked` set by an admin)
+before a processor can set them, rather than a processor setting them
+freely like every other status? Recommend yes for these two
+specifically, given how politically consequential the recommendation
+that prompted this section says this feature is; not blocking the
+schema design, but worth deciding before Stage 13's promise-tracking
+processor actually ships.]
 
 ```
 PromiseSource
@@ -784,9 +995,7 @@ PromiseSource
  ├── source_item_id  — FK → CollectedItem
  └── relation        — 'primary' | 'supporting'
                         (exactly one 'primary' row per promise, enforced by
-                        a partial unique index — mirrors ClaimSource; a
-                        gap an independent review caught, since this table
-                        originally had no uniqueness at all)
+                        a partial unique index — mirrors ClaimSource)
 ```
 `UNIQUE (promise_id, source_item_id)`, alongside the partial index above.
 
@@ -806,22 +1015,16 @@ relation_type)` — same canonicalization as `ClaimRelation` above.
 
 ```
 PromiseEvidence                    — what fulfillment_status is based on.
-                                      Originally designed as a polymorphic
-                                      evidence_type/evidence_id pair,
-                                      accepting the loss of a real FK as
-                                      the cost of covering heterogeneous
-                                      evidence types — but with exactly
-                                      four known types and no plan for
-                                      more, four nullable FKs with a check
-                                      constraint (exactly one non-null)
-                                      gets the same flexibility *and* real
-                                      referential integrity, for free.
-                                      Corrected rather than kept as a
-                                      deliberate tradeoff — a dangling
-                                      evidence_id after a Bill gets
-                                      deleted/merged, silently rendering
-                                      on a promise page, wasn't actually a
-                                      cost worth paying
+                                      Four nullable FKs with a check
+                                      constraint requiring exactly one
+                                      non-null, rather than a polymorphic
+                                      evidence_type/evidence_id pair —
+                                      with exactly four known evidence
+                                      types and no plan for more, this
+                                      gets real referential integrity (no
+                                      dangling reference after a Bill is
+                                      deleted/merged) at no cost to
+                                      flexibility
  ├── promise_id      — FK → Promise
  ├── bill_id         — nullable, FK → Bill
  ├── vote_id         — nullable, FK → Vote
@@ -832,12 +1035,15 @@ PromiseEvidence                    — what fulfillment_status is based on.
                         without this, conflicting evidence (a bill showing
                         partial progress vs. a news report calling the
                         promise abandoned) can't be told apart from
-                        agreeing evidence; same gap as the old
-                        supporting/contradicting split on Claim, just
-                        caught this time before it shipped instead of
-                        after
+                        agreeing evidence
 ```
-`UNIQUE (promise_id, bill_id, vote_id, news_item_id, claim_id)`.
+One partial unique index per evidence arc — `UNIQUE (promise_id, bill_id)
+WHERE bill_id IS NOT NULL`, and likewise for `vote_id`/`news_item_id`/
+`claim_id` — not a single `UNIQUE` over all four nullable columns, which
+Postgres would never enforce (NULLs compare as distinct, so the combined
+key can't collide). `supports` is deliberately not part of any key: one
+evidence item has one stance per promise, updated in place, so the same
+bill can't be recorded as both `fulfillment` and `non_fulfillment`.
 `[processor: promise-tracking]`
 
 ### Votes
@@ -879,10 +1085,10 @@ Vote                                — the roll-call event itself, not any
  │                                                              [aggregator]
  ├── raw_result          — nullable; the jurisdiction's own outcome
  │                          string, unnormalized — same raw_status/
- │                          raw_value pattern as Bill/VoteRecord, missing
- │                          here originally even though `result` has
- │                          exactly the same normalization problem those
- │                          two fields exist to solve            [aggregator]
+ │                          raw_value pattern as Bill/VoteRecord, needed
+ │                          because `result`'s 2-value enum has the same
+ │                          normalization problem those fields solve
+ │                          elsewhere                            [aggregator]
  └── source_item                                                [aggregator]
 ```
 `UNIQUE (session_id, external_vote_id)`.
@@ -913,9 +1119,7 @@ NewsItem / SocialPost
  ├── canonical_url       — the article/post's own URL — distinct from
  │                          whatever CollectedItem.source_url the fetch
  │                          came through (a GDELT-sourced item's fetch URL
- │                          is a GDELT record, not the article itself);
- │                          Stage 8 already said this field existed, it
- │                          just hadn't actually been added here yet
+ │                          is a GDELT record, not the article itself)
  │                                                                [aggregator]
  ├── published_at        — the item's own publication time (distinct from
  │                          any one CollectedItem's retrieved_timestamp,
@@ -931,13 +1135,19 @@ NewsItem / SocialPost
  ├── suppressed_at        — nullable                               [aggregator/admin]
  └── suppression_reason   — nullable                                [aggregator/admin]
 ```
-No `duplicate_of` — it was a third, contradictory dedup mechanism: the
-aggregator already catches exact duplicates *before* writing a new row
-(using this same `content_hash`), so there's no second row for
-`duplicate_of` to point at in the normal case, and `NewsItemRelation`
-already exists for the residual case (two rows that exist because they
-looked different enough to both get written, but a processor later
-decides they're the same/near-same article). One mechanism, not two —
+`UNIQUE (content_hash, canonical_url)` — the exact-dedup key the
+aggregator checks before writing a row; `canonical_url` is normalized
+(lowercased scheme/host, no fragment) before it's compared, using the same
+helper as `CollectedItem.source_url`.
+
+No `duplicate_of` field — it would be a third, contradictory dedup
+mechanism: the aggregator already catches exact duplicates *before*
+writing a new row (using this same `content_hash`), so there's no second
+row for `duplicate_of` to point at in the normal case, and
+`NewsItemRelation` already covers the residual case (two rows that exist
+because they looked different enough to both get written, but a
+processor later decides they're the same/near-same article). One
+mechanism, not two —
 `NewsItemRelation.relation_type` gets `'exact_duplicate'` added alongside
 `'possible_near_duplicate'` (below) to cover both.
 
@@ -953,7 +1163,11 @@ NewsItemSource                     — which raw fetch(es) this item came
  ├── news_item_id    — FK → NewsItem/SocialPost           [aggregator]
  └── source_item_id  — FK → CollectedItem                  [aggregator]
 ```
-`UNIQUE (news_item_id, source_item_id)`.
+`UNIQUE (news_item_id, source_item_id)`. A `DEFERRABLE INITIALLY
+DEFERRED` constraint trigger guarantees every `NewsItem` has **at least
+one** `NewsItemSource` row at COMMIT (and can't lose its last one while
+it still exists) — the same provenance guarantee `Claim`/`Promise` get,
+minus "exactly one primary," since this table has no `relation` column.
 
 ```
 NewsItemRelation                   — same shape as ClaimRelation, for
@@ -982,16 +1196,15 @@ NewsItemPolitician                 — replaces mentioned_politicians[];
 
 ### Review & audit
 
-An independent review of this schema found that three separate features
-already in this spec — the Stage 4 admin review queue, the per-profile
-"report an error" channel, and the Stage 11 legal-review gate — all assume
-a human can correct something, but nothing in the schema recorded that a
-correction happened. Concretely: an operator manually sets a `Claim` to
-`DISPUTED_BY_SOURCE` after reviewing a complaint, and without a lock, the
-next processor re-run (or any re-run triggered by a new `model_version`)
-silently recomputes it back. Same problem for a rejected entity-resolution
-match or a flagged `CollectedItem` — it just gets re-flagged forever and
-the review queue never actually drains.
+The Stage 4 admin review queue, the per-profile "report an error"
+channel, and the Stage 11 legal-review gate all assume a human can
+correct something — this is what records that a correction happened.
+Concretely: an operator manually sets a `Claim` to `DISPUTED_BY_SOURCE`
+after reviewing a complaint, and without a lock, the next processor
+re-run (or any re-run under a new `ProcessorRun`) silently
+recomputes it back. Same problem for a rejected entity-resolution match
+or a flagged `CollectedItem` — it just gets re-flagged forever and the
+review queue never actually drains.
 
 The fields this needs are already threaded through the entities above
 (`Claim.verification_set_by`/`verification_locked`,
@@ -1005,7 +1218,8 @@ and who decided that" needs one place to answer from, not four:
 ReviewAction                       — one row per human correction, across
                                       every entity that can have one
  ├── target_type      — 'claim' | 'promise' | 'news_item_politician' |
- │                        'politician_alias' | 'collected_item'
+ │                        'politician_alias' | 'collected_item' |
+ │                        'affiliation'
  ├── target_id
  ├── field_changed
  ├── previous_value    — jsonb; `field_changed` varies by `target_type`
@@ -1020,8 +1234,7 @@ ReviewAction                       — one row per human correction, across
  └── created_at
 ```
 `INDEX (target_type, target_id)` — "show the review history for this
-claim" is this table's only real access path, and was entirely unindexed
-before an independent review caught it. `[admin GUI]` — written whenever
+claim" is this table's only real access path. `[admin GUI]` — written whenever
 an admin action changes a field that also has a `locked`/
 `verification_locked`-style flag; the write and the lock happen together,
 not as two separate steps that could drift apart.
@@ -1029,7 +1242,11 @@ not as two separate steps that could drift apart.
 **Retraction & suppression.** `Claim`/`NewsItem` above both got
 `is_suppressed`/`suppressed_at`/`suppression_reason` fields — soft
 suppression, not `DELETE`, specifically so the provenance trail (useful
-for a legal defense, not just an offense) survives a takedown. `DELETE`
+for a legal defense, not just an offense) survives a takedown. A `CHECK`
+keeps the three fields in agreement: a suppressed row always carries when
+and (non-blank) why, an unsuppressed one carries neither — so an
+un-suppress must clear all three in one `UPDATE` (the history of it lives
+in `ReviewAction`, not on the row). `DELETE`
 alone has a second problem beyond losing that trail: a syndicated
 re-crawl of the same content produces a different `content_hash` and
 `source_url`, so exact-dedup doesn't catch it, and a deleted claim just
@@ -1048,6 +1265,94 @@ SuppressionRule                    — what stops a suppressed claim from
 `[admin GUI]` — checked by the aggregator (for `url_pattern`/
 `content_hash`, before writing a `NewsItem`) and the claim-extraction
 processor (for `claim_text_pattern`, before writing a `Claim`).
+
+### Public accounts & community flags
+
+`User` is deliberately minimal — see Stage 16 for the public-facing
+signup/flagging flow this table supports. The "no PII, bare minimum for
+fidelity/security" principle applies to this table specifically (site
+accounts), not to politicians' own public-record data elsewhere in this
+schema.
+
+```
+User
+ ├── email               — unique, used for login. Not made optional —
+ │                          it's the login mechanism itself, not
+ │                          incidental PII collected alongside a
+ │                          separate identifier; making it optional would
+ │                          need a username-based login as the
+ │                          alternative, which isn't in scope here
+ ├── password_hash        — hashed, never encrypted — a real distinction,
+ │                          not a wording preference: encryption is
+ │                          reversible (a key compromise exposes every
+ │                          password), a modern password hash
+ │                          (bcrypt/argon2/scrypt, not raw SHA-256) isn't
+ │                          designed to be. This column never sees
+ │                          plaintext, and neither does the app beyond
+ │                          the auth layer that computes the hash
+ ├── role                 — 'user' | 'admin'
+ ├── is_suspended         — nullable-equivalent boolean, default false —
+ │                          an abuse-resistance lever independent of
+ │                          deleting the account (preserves their
+ │                          `CommunityFlag` history for review)
+ └── created_at
+```
+No `name`, no address, no phone — nothing beyond what login and
+attribution on a flag submission actually require. `UNIQUE (email)`.
+Auth data (this table) stays structurally separate from civic-submission
+data (`CommunityFlag`) — the latter references a user by FK, never
+duplicates their email/credential inline, so a query or export of flag
+data doesn't incidentally carry authentication material with it.
+
+```
+CommunityFlag                      — a logged-in user's submission
+                                      flagging something as wrong,
+                                      distinct from ReviewAction (which
+                                      records a correction an admin
+                                      already made) — this is the
+                                      *request*, ReviewAction is the
+                                      *resolution*
+ ├── target_type          — same enum as ReviewAction.target_type
+ ├── target_id
+ ├── submitted_by         — FK → User
+ ├── note                 — what the user says is wrong
+ ├── counter_evidence_url — nullable; a link to whatever supports the
+ │                          flag, so an admin isn't starting from zero
+ ├── status               — 'pending' | 'actioned' | 'dismissed'
+ ├── resolved_by           — nullable, FK → User (the admin who actioned/
+ │                          dismissed it)
+ ├── resolved_at           — nullable
+ └── created_at
+```
+`INDEX (target_type, target_id)` — same access pattern, same reasoning,
+as `ReviewAction`'s index above. An admin actioning a flag (as opposed to
+dismissing it) is expected to also write the corresponding `ReviewAction`
+— two rows, not one, since "a user reported this" and "an admin changed
+this" are different facts with different actors and shouldn't collapse
+into a single row that can't represent "flagged three times, actioned
+once."
+
+**Abuse resistance on this specific feature:** login-gated (no anonymous
+flags — decision #9's abuse-resistance principle, applied here
+specifically), and worth a per-user rate limit on `CommunityFlag`
+creation before Stage 16 ships publicly — [DECISION TO CONFIRM: exact
+limit, likely something like N per day, revisit once there's real usage
+data to tune against rather than guessing a number now].
+
+**Operational privacy principles, beyond what the schema above already
+enforces** — infra/ops decisions, not new tables, but stated explicitly
+so they're a real commitment rather than assumed:
+- Minimal logging — access/request logs kept only as long as actually
+  useful for abuse detection and debugging, not indefinitely by default.
+- No unnecessary IP address retention — if request logs capture IP at
+  all, on a short retention window, not joined into `User`/
+  `CommunityFlag` as a permanent column.
+- Explicit account/data deletion policy — a `User` can request deletion;
+  what actually happens to their `CommunityFlag` history on deletion
+  (anonymized vs. retained for audit integrity) needs a real answer
+  before Stage 16 ships, not left implicit.
+- Encryption at rest and in transit for the database and any backups —
+  standard practice, stated here so it's a checked item, not assumed.
 
 ---
 
@@ -1100,15 +1405,12 @@ attributed statement extracted from that raw content:
 
 ```
 Claim
- ├── news_item_id           — FK → NewsItem/SocialPost, required. The
- │                             prose always said Claim was "layered on
- │                             top of NewsItem/SocialPost" but this FK
- │                             was actually missing — without it there's
- │                             no way to navigate from a claim back to
- │                             the article/post it came from (needed for
- │                             Stage 5's "Claims & allegations" next to
- │                             "Source material" on the same page), or
- │                             re-run extraction scoped to one item
+ ├── news_item_id           — FK → NewsItem/SocialPost, required — lets a
+ │                             claim be navigated back to the article/
+ │                             post it came from (needed for Stage 5's
+ │                             "Claims & allegations" next to "Source
+ │                             material" on the same page), and lets
+ │                             extraction be re-run scoped to one item
  ├── exact_text              — the original wording, unmodified
  ├── normalized_claim        — a neutral paraphrase for display/search
  ├── claimant_text           — who said it, as written/reported
@@ -1129,18 +1431,19 @@ Claim
  ├── is_suppressed           — see "Retraction & suppression" below
  ├── suppressed_at           — nullable
  ├── suppression_reason      — nullable
- ├── model_version           — which extraction/summarization pass
- │                             produced this row
+ ├── processor_run_id        — nullable, FK → ProcessorRun — which
+ │                             extraction/summarization pass produced
+ │                             this row; processor version, model and
+ │                             config are derivable through the join
  └── generated_summary       — the claim-preserving summary, not a bare
                                 assertion
 ```
 
-No inline `target` (was a plural field with no way to actually join on
-it — the exact array-column problem fixed everywhere else in this
-section, missed here in the earlier pass) and no `target_response` (was a
-single FK to an unspecified table, wrong cardinality in both directions —
-one statement often rebuts several claims, one claim can get more than
-one response over time). Both become join tables:
+`ClaimTarget` and `ClaimResponse` (below) replace an inline `target`/
+`target_response` on `Claim` itself — a politician reference needs to be
+joinable, not a plural field with nothing to join on, and a claim can
+have more than one response over time just as one response can address
+more than one claim, so neither fits as a single FK on the row:
 
 ```
 ClaimTarget                        — politician(s) a claim is about
@@ -1168,7 +1471,11 @@ Exclusive-arc FK, not a `response_type` discriminator + untyped
 is set, enforced by a `CHECK (num_nonnulls(...) = 1)` constraint — a real
 FK on whichever one applies, not a same-shape-different-meaning ID column
 Postgres can't validate. `[processor: claim extraction]` for both.
-`UNIQUE (claim_id, response_news_item_id, response_claim_id)`.
+One partial unique index per arc — `UNIQUE (claim_id,
+response_news_item_id) WHERE response_news_item_id IS NOT NULL`, and
+likewise for `response_claim_id` — for the same reason as
+`PromiseEvidence`: a plain `UNIQUE` over two nullable columns never
+fires.
 
 No `source_item`/`supporting_sources[]`/`contradicting_sources[]` here —
 sources are joined via `ClaimSource` (below), not array columns, so a
@@ -1197,6 +1504,16 @@ express "must have at least one row in another table." It also fires on
 DELETE/UPDATE of `claim_sources`, so a primary source can't be
 re-parented, deleted, or demoted out from under an existing claim. Same
 pattern, same trigger shape, for `Promise`/`PromiseSource` below.
+
+A claim's `news_item_id` (the article it was extracted from) and its
+primary `ClaimSource` (the `CollectedItem` the extraction's provenance
+traces to) are deliberately **not** constrained to point at the same
+underlying fetch: the primary source can be a different, better
+`CollectedItem` than any of the news item's own fetches (e.g. a primary
+government record backing the claim), and the extraction's provenance
+question ("what did this come from") is a separate one from "which
+article said it." Only `claims.news_item_id` itself is enforced (real
+FK); the relationship between the two is not.
 
 ```
 ClaimRelation                      — links two Claims a processor thinks
@@ -1260,6 +1577,25 @@ sourced and status-labeled," which is both more defensible and closer to
 what the project can actually deliver without silently adjudicating
 disputed claims.
 
+**"Disputed" as a first-class, visible state, not just an internal
+enum value.** Most of the machinery for this already exists —
+`verification_status` already has `CONTRADICTED`/`DISPUTED_BY_SOURCE`
+rather than collapsing disagreement into a single "unverified" bucket,
+`ClaimSource.relation` already distinguishes `'supporting'` from
+`'contradicting'`, and `verification_set_at` already answers "last
+reviewed." What's new here is a presentation commitment, not new schema:
+a `Claim` with any `'contradicting'` `ClaimSource` rows renders its
+supporting and contradicting evidence side by side, not just a status
+badge with the dispute implied — matching Stage 8/10's own build items
+below once claim extraction actually exists to produce disputed claims.
+And restating what "Retraction & suppression" below already establishes,
+because it's the same principle applied to a different trigger:
+disputed is not the same as wrong, and a claim doesn't get suppressed
+just because it's disputed — suppression is for the cases "SuppressionRule"
+describes (abuse, confirmed-false content), not for ordinary
+disagreement, which is exactly what the `CONTRADICTED` status and the
+Responses section already exist to show honestly instead of hiding.
+
 **Section 230 caveat:** Section 230 protects hosting someone else's
 speech, but the site's own AI-generated claim extraction, normalization,
 and summaries are the site's own output — the more the pipeline
@@ -1267,6 +1603,53 @@ transforms third-party material into new substantive text, the less that
 output can be assumed to inherit third-party protection. This is exactly
 why the claim-preserving pipeline (attribute, don't assert) matters
 operationally, not just as a disclaimer.
+
+### Affiliations (bias/conflict-of-interest relationships)
+
+Distinct from `Claim` — a `Claim` is an attributed
+*statement* someone made; an `Affiliation` is a structured, enumerable
+*relationship* (board seat, financial interest, employment, family tie,
+donor relationship) that could bias how a politician acts on an issue.
+Same defamation sensitivity as `Claim`, though: asserting "politician X
+sits on the board of company Y" is a factual claim about a relationship,
+disputable the same way any other third-party assertion is, so it gets
+the same treatment — required primary source, a status field, never
+presented as the site's own conclusion about *why* a vote happened.
+
+```
+Affiliation
+ ├── politician_id      — FK → Politician                        [processor: claim extraction, or admin GUI]
+ ├── entity_name         — the company/organization/person the tie is to
+ ├── relationship_type   — 'board_member' | 'financial_interest' |
+ │                          'employment' | 'family' | 'donor' | 'other'
+ ├── description         — nullable; free text for anything the enum
+ │                          alone doesn't capture (e.g. dollar amount,
+ │                          specific role)
+ ├── verification_status — same enum and same meaning as `Claim`'s —
+ │                          reusing it rather than a parallel one, since
+ │                          "is this sourced/corroborated/disputed" means
+ │                          the same thing here as it does for a `Claim`
+ ├── source_item         — FK → CollectedItem, required (mirrors
+ │                          `Claim`'s "exactly one primary source"
+ │                          requirement — same deferred-trigger pattern,
+ │                          via a join table, not inlined, for the same
+ │                          reason `ClaimSource` isn't inlined: more than
+ │                          one source can corroborate the same tie)
+ └── is_suppressed       — same soft-suppression pattern as `Claim`/
+                            `NewsItem`, for the same retraction reasons
+```
+`AffiliationSource` — same shape as `ClaimSource` (join table,
+`relation: 'primary' | 'supporting' | 'contradicting'`, exactly one
+`'primary'` row enforced by a partial unique index, plus the same
+deferred-constraint-trigger pattern requiring at least one). Not
+respecified field-by-field here since it's a structural copy of
+`ClaimSource` with `affiliation_id` in place of `claim_id`.
+
+[DECISION TO CONFIRM: `relationship_type` as a fixed enum vs. free text —
+leaning enum for the same "queryable, not just readable" reason
+`Claim.verification_status` is an enum; six categories cover what's come
+up in review so far, with `'other'` as the release valve, same pattern
+as `election_type`/`sponsor_role` elsewhere in this doc.]
 
 **Non-exhaustive list of other legal areas a real lawyer should look at
 before Stage 11 clears**, beyond defamation: copyright (how much of an
@@ -1279,6 +1662,138 @@ disclosure/consumer-protection rules depending on how the site markets
 itself. The pilot state's specific defamation privilege and
 public/private-figure fault-standard split should be part of that same
 review.
+
+---
+
+## Provenance chain & processor accountability
+
+Provenance isn't just a supporting mechanism here — it's close to the
+actual product: an auditable civic evidence system, not an AI verdict on
+politicians. Every fact displayed on the site should be traceable
+through an explicit chain, not just "ultimately came from somewhere":
+
+```
+source document → source snapshot → extracted observation →
+normalized entity → derived analysis → displayed claim
+```
+
+Mapped onto entities that already exist, so this is mostly a naming/
+completeness exercise, not new architecture:
+
+- **Source document** — the actual page/API response/upload as it
+  existed at fetch time; not stored as its own row, but is what
+  `CollectedItem.content_hash` is a checksum *of*.
+- **Source snapshot** — `CollectedItem` itself: `source_url`,
+  `retrieved_timestamp`, `collector_type` (source type/authority),
+  `content_hash`, `raw_payload`.
+- **Extracted observation** — a `Claim`/`Promise`/`Affiliation` row
+  before normalization: `exact_text`, `claimant_text`, tied back to its
+  `CollectedItem` via `ClaimSource`/`PromiseSource`/`AffiliationSource`.
+- **Normalized entity** — the same row once `verification_status`/
+  `fulfillment_status` and FK relationships (`ClaimTarget`, etc.) are
+  resolved.
+- **Derived analysis** — Stage 6/13's comparison views, computed at
+  query time from normalized entities, never stored as a separate fact
+  (see "Facts vs. interpretations" below — this is what keeps a derived
+  number honest, since it's recomputed from source rows every time, not
+  cached as its own assertable fact that could drift from what actually
+  backs it).
+- **Displayed claim** — what actually renders: `Claim.generated_summary`
+  or the raw `exact_text`, each carrying its full chain back through
+  every link above — see Stage 17's evidence explorer for making that
+  chain actually clickable, not just theoretically traceable.
+
+Two things below make this concrete for every processor and every
+field, not just the ones that happened to need them first:
+**processing version** (`ProcessorRun`) and **history of corrections**
+(`PipelineEvent`).
+
+### `ProcessorRun` — formalizing "processing version" for every processor
+
+Every processor invocation becomes a real row, not just an implicit
+fact inferred from a per-row version column existing on some tables and
+not others:
+
+```
+ProcessorRun
+ ├── processor_name       — e.g. 'claim-extraction', 'issue-area-tagging',
+ │                           'promise-tracking', 'profile-activity-summary'
+ ├── processor_version     — this processor's own code version,
+ │                           independent of any model it calls
+ ├── model_version         — nullable; the LLM/model identifier+version,
+ │                           for processors that use one (issue-area
+ │                           keyword-mapping doesn't; claim extraction
+ │                           and the Stage 12 summaries do)
+ ├── config                — jsonb; the actual prompt template/config
+ │                           used for this run, not just "which model" —
+ │                           reproducibility needs the exact input, not
+ │                           just a version label
+ ├── input_ref             — jsonb; what this run actually processed (one
+ │                           `CollectedItem` id, a batch, a politician id
+ │                           for a profile summary — shape varies by
+ │                           processor, same reasoning as
+ │                           `ReviewAction.previous_value` being jsonb)
+ ├── started_at
+ ├── finished_at            — nullable
+ ├── status                — 'running' | 'succeeded' | 'failed'
+ └── summary               — jsonb (rows written, confidence range,
+                              errors) — same "structured stats, not a
+                              parsed free-text log" reasoning as
+                              `CollectorJob.result_summary`
+```
+`Claim`/`Promise`/`Affiliation` each carry a nullable `processor_run_id`
+FK rather than an inline `model_version` column (`Claim` used to have
+one; it was dropped when `ProcessorRun` landed in Stage 2) — the
+model/processor version is derivable via the join instead of duplicated
+per row.
+Mirrors `CollectorJob` (Stage 4) deliberately — collectors and
+processors are sibling pipeline layers, and "what ran, when, against
+what, with what config" is the same question for both.
+
+### `PipelineEvent` — the event log, broader than `ReviewAction`
+
+`ReviewAction` (already built, "Review & audit" above) stays exactly as
+it is — it's specifically "an admin corrected a field that also has a
+`locked`-style flag," and that plumbing is already real. `PipelineEvent`
+is a separate, broader log covering pipeline-stage events that aren't
+admin corrections, so "what did the site know on date X, and why" is
+answerable for automated changes too, not just human ones:
+
+```
+PipelineEvent
+ ├── target_type          — same value set as ReviewAction.target_type
+ ├── target_id
+ ├── event_type           — 'source_acquired' | 'entity_extracted' |
+ │                           'entity_modified' | 'verification_changed' |
+ │                           'processor_executed' | 'admin_approved' |
+ │                           'admin_reverted'
+ ├── processor_run_id     — nullable, FK → ProcessorRun (set for
+ │                           processor-caused events)
+ ├── actor                — nullable; admin identity, for human-caused
+ │                           events (mirrors ReviewAction.actor)
+ ├── previous_value        — nullable, jsonb
+ ├── new_value             — nullable, jsonb
+ └── created_at
+```
+`INDEX (target_type, target_id)`, same access pattern as `ReviewAction`.
+
+[DECISION TO CONFIRM: write a `PipelineEvent` on *every* field change
+everywhere, or scope it to the fields that actually matter for "what did
+the site say" — `verification_status`, `fulfillment_status`,
+`intake_status`, suppression state? Recommend starting scoped (those
+four), since logging every touch to every column is a write-volume cost
+without a clear reader for most of it; widen later if "what changed and
+when" turns out to matter for a field not on that list.]
+
+**Full entity versioning (an `Entity → v1/v2/v3` snapshot chain, not
+just this event log) is explicitly not being built now** — noted instead
+under "Open items not yet scheduled" alongside the DB-snapshot idea it's
+the same underlying ask as. `PipelineEvent`'s `previous_value`/
+`new_value` pair already answers "what changed and when" for the fields
+scoped above; a full point-in-time reconstruction of an entire row (or
+the whole database) is a larger, separate feature, worth building if
+"what did this exact page look like on date X" turns out to be a real
+need, not speculatively now.
 
 ---
 
@@ -1306,10 +1821,11 @@ content-hash work in "Aggregator output schema":
 principle from "People & positions":
 - Every row in every government-record table resolves a non-null
   `source_item` to a real `CollectedItem`.
-- Every `Claim` has exactly one `ClaimSource` with `relation: 'primary'`
-  — verify the partial unique index is real, not aspirational.
-- Attempting to insert a `Claim`/`Promise` with zero source rows fails at
-  the DB layer, not just gets caught later by app logic.
+- Every `Claim`/`Affiliation` has exactly one `ClaimSource`/
+  `AffiliationSource` with `relation: 'primary'` — verify the partial
+  unique index is real, not aspirational.
+- Attempting to insert a `Claim`/`Promise`/`Affiliation` with zero source
+  rows fails at the DB layer, not just gets caught later by app logic.
 
 **Defamation-resistant pipeline** — the highest-stakes category; needs an
 adversarial regression suite, not spot checks, since this is the single
@@ -1333,15 +1849,14 @@ claim:
   adapter — if that's not literally true, the jurisdiction-agnostic claim
   is false.
 - A manual-upload-only deployment (every automated collector disabled,
-  cross-cutting decision #7) still boots and lets an admin build a
+  cross-cutting decision #6) still boots and lets an admin build a
   complete profile by hand — exercise this end to end, since it's
   currently only modeled.
 - A Stage 6 comparison view can be added or removed by touching one file
   — proves the presenter layer is actually modular, not just documented
   as such.
 
-**Pipeline-layer boundary enforcement** — the sharpest gap the
-independent schema review found:
+**Pipeline-layer boundary enforcement:**
 - The `[aggregator]`/`[processor: X]` tagging convention used throughout
   "Aggregator output schema" is currently pure documentation — nothing
   stops an aggregator code path from writing `verification_status`.
@@ -1349,7 +1864,7 @@ independent schema review found:
   (separate service-layer write functions, or DB-level column grants) or
   explicitly accept it as a code-review convention only.
 - Presenter code contains zero direct DB queries (cross-cutting decision
-  #5) — checkable with a lint rule banning ORM calls outside the service
+  #4) — checkable with a lint rule banning ORM calls outside the service
   layer.
 
 **Operational / legal:**
@@ -1372,7 +1887,7 @@ by stage since that's what maps to CI. Every category ties back to a
 specific line in "Validation & acceptance criteria" above.
 
 **Unit tests** (Vitest, no external dependencies) — pure functions:
-`CollectedItem`-to-entity parsers, service functions (decision #5),
+`CollectedItem`-to-entity parsers, service functions (decision #4),
 enum/status transitions, `raw_status`/`raw_value`-to-normalized-enum
 mapping. Fast; every commit.
 
@@ -1388,10 +1903,11 @@ mapping. Fast; every commit.
   shouldn't happen.
 - *Pipeline-layer boundary*: attempt to write a `[processor: X]`-tagged
   field from aggregator code, assert it's rejected. Only has real teeth
-  once cross-cutting decision #20's open question (DB grants vs.
-  service-layer-only vs. code-review convention) is actually resolved —
-  until then this can only assert the service-layer function signatures
-  don't expose the field, which is weaker than a DB-level guarantee.
+  once "Pipeline-layer boundary enforcement"'s open question above (DB
+  grants vs. service-layer-only vs. code-review convention) is actually
+  resolved — until then this can only assert the service-layer function
+  signatures don't expose the field, which is weaker than a DB-level
+  guarantee.
 
 **Adversarial regression suite** (its own runner — versioned fixtures,
 possibly real LLM calls, not folded into general unit tests) — the
@@ -1426,7 +1942,7 @@ interface bug caught early rather than discovered during Stage 15 itself.
 
 **Static analysis / lint rules** (ESLint, part of Stage 0's CI):
 - Ban raw ORM/query-builder calls outside the service layer (decision
-  #5).
+  #4).
 - Flag writes to `[processor: X]`-tagged fields from outside that
   processor's module, where feasible as a lint rule rather than a
   runtime check.
@@ -1448,17 +1964,12 @@ the integration suite once Stage 1's interfaces exist.
 
 ## Staging notes
 
-Everything below is a full replan, not a renumbering — the original
-9-stage plan was written before the four-layer pipeline, the collector
-architecture, the full "Aggregator output schema," the claim-preserving
-model, the admin GUI, and the review/audit/suppression system existed.
-Folding all of that into the old Stage 1 and Stage 5 made both
-unreviewable as single units. This plan is deliberately smaller and more
-numerous, so each stage maps to one thing in "Validation & acceptance
-criteria" above that can actually be checked before moving on — and
-because the schema is provenance-first from Stage 1, this plan should be
-the last one; the intent is that new features are new stages appended to
-this list, not migrations of what's already built.
+This plan is deliberately small and numerous rather than a few large
+stages, so each stage maps to one thing in "Validation & acceptance
+criteria" above that can actually be checked before moving on, and each
+stage's migration/PR stays reviewable as a single unit. Because the
+schema is provenance-first from Stage 1, new features should be new
+stages appended to this list, not migrations of what's already built.
 
 Two structural choices worth calling out rather than leaving implicit:
 - **Schema is split into two stages along the same line "Editorial
@@ -1468,7 +1979,7 @@ Two structural choices worth calling out rather than leaving implicit:
 - **A real deployment/ship checkpoint (Stage 7) sits in the middle of
   this plan, not just at the end.** Everything through Stage 7 is
   primary-source-only — no LLM, no crawler, no legal exposure — so it's a
-  genuinely shippable product on its own per cross-cutting decision #7,
+  genuinely shippable product on its own per cross-cutting decision #6,
   and shipping it early means Stage 15's fork-ability test (a second
   jurisdiction) can run against a real working app instead of waiting
   until everything else is also done.
@@ -1505,6 +2016,9 @@ placeholder homepage, CI passes on an empty test suite. No real data yet.
   is the stage that creates the table), `Term`.
 - Legislation: `IssueArea`, `Bill`, `BillSponsor`, `BillIssueArea`.
 - Votes: `Vote`, `VoteRecord`.
+- Committees & meetings: `Committee`, `CommitteeMembership`, `Meeting` —
+  built with the rest of Stage 1's government-record tables so Stage 3's
+  adapter has somewhere to write them.
 - `CollectedItem` provenance envelope, including `intake_locked` (same
   reasoning as `PoliticianAlias.locked` — built with the table, not
   retrofitted).
@@ -1512,11 +2026,17 @@ placeholder homepage, CI passes on an empty test suite. No real data yet.
   `Aggregator`, `Processor`, `Presenter` — see "Four-layer modular
   pipeline"), plus a stub/mock `JurisdictionAdapter` with fake data so
   Stage 3+ has something concrete to implement against and Stage 5's UI
-  can be built in parallel against mock data.
-- The shared service-layer package itself (decision #5) — plain,
+  can be built in parallel against mock data. Every `fetchX` returns
+  `Collected<T>[]` — records paired with the verbatim response snapshot
+  they were parsed from — because every government-record row needs a
+  `source_item`, and an adapter that returned only parsed objects could
+  never supply one; the adapter never touches the database, the
+  aggregator writes one `CollectedItem` per snapshot. `collect()` yields
+  every entity kind as tagged records, in foreign-key dependency order.
+- The shared service-layer package itself (decision #4) — plain,
   JSON-serializable function signatures, not framework-specific types
   (no Next.js `Request`/React-specific objects in or out). Costs nothing
-  now and is what keeps decision #8's option open cheaply: a function
+  now and is what keeps decision #7's option open cheaply: a function
   that already takes/returns plain data is trivial to wrap in an API
   route later if a non-TypeScript module ever needs one; a function
   built around framework internals isn't.
@@ -1550,6 +2070,12 @@ correction, not government records.
   `verification_set_by`/`verification_set_at`/`verification_locked`),
   `ClaimSource`, `ClaimTarget`, `ClaimResponse`, `ClaimRelation`.
 - Review & audit: `ReviewAction`, `SuppressionRule`.
+- Processor accountability: `ProcessorRun` (see "Provenance chain &
+  processor accountability") — built here rather than with the first
+  processor because `Claim` and `Promise` carry a nullable
+  `processor_run_id` FK to it. `PipelineEvent` (the broader event log)
+  has no dependents and an open scope decision, so it waits for Stage
+  9/10.
 
 **Verification:** unit tests on the schema, including the constraints
 that matter most here specifically — inserting a `Claim` with zero
@@ -1560,26 +2086,70 @@ that matter most here specifically — inserting a `Claim` with zero
 
 ## Stage 3 — Pilot-state government data ingestion
 
+**Research task — done, findings below (confirmed by direct requests
+against the live API, not just its docs page, which turned out to be
+sparse on actual response shapes):**
+- Legislator roster, bill lists/detail, and committee/meeting-calendar
+  data are all real, working JSON feeds, API-key-gated. Bill records
+  include a rich status/history trail (a last-action summary, a full
+  array of dated status transitions, and a subject/topic list that's a
+  strong candidate input for Stage 1's issue-area tagging processor) and
+  sponsor IDs, but the status string is
+  jurisdiction-raw text ("Governor Signed," not a normalized enum value)
+  — confirms the `raw_status`/`status` split already in `Bill` was the
+  right call, not just defensive over-design.
+- **Gap found, not previously known: no roll-call vote data anywhere in
+  this API.** No endpoint returns which legislators voted yea/nay on a
+  given bill — confirmed by testing several plausible undocumented paths,
+  all 404, and independently by a web search turning up nothing beyond
+  third-party aggregators (LegiScan) that apparently source this some
+  other way, not from this API. This blocks populating `VoteRecord` (and
+  possibly `Vote` itself, depending on whether roll-call metadata like
+  yea/nay counts is bundled with vote data or is equally unavailable) from
+  the primary adapter as originally scoped. [DECISION TO CONFIRM: how to
+  handle this gap — options are (a) ship Stage 3 with `Vote`/`VoteRecord`
+  manual-upload-only for the pilot state, accepting that as this
+  jurisdiction's real limitation rather than a shortcut; (b) integrate
+  LegiScan (or another third party) as a second, vote-specific data
+  source, which reopens the "who's the source of truth" question the
+  `CollectedItem` provenance model was built to answer cleanly for a
+  single source; (c) keep investigating for an undocumented endpoint or
+  a non-JSON page that could be scraped instead (crawler collector type,
+  not API poller) — recommend (a) to start, since it's honest about what
+  this jurisdiction's government actually publishes and doesn't block
+  everything else in this stage, with (b)/(c) as later stretch goals.]
+- Session and chamber identifiers follow simple, predictable codes (a
+  year plus a session-type marker; short chamber codes). Both map cleanly onto `LegislativeSession.external_session_id` and
+  `Chamber.slug` as already designed — no schema change needed for these.
+- Bill subject/topic lists have no aggregator-owned home in the schema
+  (`BillIssueArea` is processor-only). [DECISION TO CONFIRM: the issue-
+  area tagging processor re-reads them from the bill's
+  `CollectedItem.raw_payload` — recommended, since the payload is kept
+  verbatim anyway — vs. adding a `BillSubject` table the aggregator
+  writes.]
+- The API's committee-membership and meeting-calendar feeds (see
+  "Committees & meetings" above) are in scope for Stage 3's real
+  adapter, not deferred.
+
 **Build:**
-- Research task first: confirm what the pilot state's legislature
-  actually exposes via API/structured data — an assumption, not a
-  confirmed fact yet.
 - Real `JurisdictionAdapter` for the pilot state: jurisdiction/chamber/
-  session/district seeding, legislator roster, bill list, roll-call
-  votes, term info. This is the first real API-poller collector, and
-  where the worker service (cross-cutting decision #6) and its
-  scheduling/alerting/politeness requirements first get built, not
-  retrofitted later. Reference implementation, not a hard requirement for
-  every deployment — decision #7 still allows manual-upload-only.
+  session/district seeding, legislator roster, bill list, committee
+  roster and meeting calendar, term info — roll-call votes per the
+  research finding above, pending the decision on that gap. This is the
+  first real API-poller collector, and where the worker service
+  (cross-cutting decision #5) and its scheduling/alerting/politeness
+  requirements first get built, not retrofitted later. Reference
+  implementation, not a hard requirement for every deployment — decision
+  #6 still allows manual-upload-only.
 - Manual upload collector, built alongside the poller so it's a genuinely
   supported path from the start: any record type above can come from a
-  human submission instead of the API, through the same validation gate.
+  human submission instead of the API, through the same validation gate
+  — this is also the fallback path for `Vote`/`VoteRecord` per the gap
+  above.
 - Scheduled ingestion job (in-process scheduler in the worker service)
   syncing polled data into Postgres via the aggregator.
 
-**Key decisions to confirm:** none yet beyond the research outcome —
-report back with what the API actually gives before locking the
-adapter's shape.
+**Key decisions to confirm:** the roll-call vote data gap above.
 
 **Verification:** directly the "Data integrity & idempotency" checks in
 "Validation & acceptance criteria" — re-polling produces zero new
@@ -1594,12 +2164,14 @@ legislature's own website.
 **Build:**
 - Authenticated `/admin` section of the same Next.js app — not a separate
   service (architecture decision #2).
+- `User` table (email, password hash, `role`, `is_suspended` — see
+  "Public accounts & community flags") — the real auth model from day
+  one per decision #8; the first admin account is seeded, no signup flow
+  yet.
 - `CollectorJob` table unifying scheduled *and* manually-triggered runs
-  into one history. Also replaces the informal "last-successful-poll"
-  health tracking from "Data collector architecture" — that's now just
-  "the most recent succeeded `CollectorJob`." First full field-level
-  definition (referenced by name elsewhere in this doc since Stage 2.5's
-  original draft, never actually specified until now):
+  into one history. Doubles as the collector health tracking from "Data
+  collector architecture" — a collector's last-successful-poll status is
+  the most recent succeeded `CollectorJob` for it:
   ```
   CollectorJob
    ├── collector_id
@@ -1627,13 +2199,16 @@ legislature's own website.
   with the rest of the admin surface, not bolted on later.
 
 **Key decisions to confirm:**
-- Auth: [DECISION TO CONFIRM] single admin credential (env var) + session
-  cookie for now, not a full multi-user system — upgradeable later
-  without touching the rest of the architecture.
-- Collector enable/disable (decision #7): [DECISION TO CONFIRM] runtime
+- Auth: per cross-cutting decision #8, the real `User` table (with
+  `role`) from the start, not a single shared credential — a self-service
+  signup flow isn't needed until Stage 16, so this stage's own admin
+  account can just be seeded directly (a setup script or a one-time env
+  var, promoted via the `role` column), but the table/session model is
+  the real one from day one rather than something to migrate off later.
+- Collector enable/disable (decision #6): [DECISION TO CONFIRM] runtime
   admin toggle (DB-backed) in addition to deploy-time env var, with the
   env var setting the initial state? Leaning yes, flagging since it
-  extends decision #7 beyond deploy-time-only.
+  extends decision #6 beyond deploy-time-only.
 
 **Verification:** admin can log in, see the pilot state's collectors
 listed, trigger a manual poll run and watch pending → running →
@@ -1642,21 +2217,38 @@ aggregator path as everything else.
 
 ---
 
-## Stage 5 — Politician profile pages
+## Stage 5 — Politician & jurisdiction profile pages
 
 **Build:**
-- Profile page: photo, bio, current office/district, voting record,
-  sponsored bills — Stage 3 data only, all primary-source, no review gate
-  needed. Fetched via service functions (`getPoliticianProfile(id)`,
-  etc.), never inline DB queries in the page component (decision #5) —
-  this is the stage that habit starts in.
+- Politician profile page: photo, bio, current office/district, voting
+  record, sponsored bills — Stage 3 data only, all primary-source, no
+  review gate needed. Fetched via service functions
+  (`getPoliticianProfile(id)`, etc.), never inline DB queries in the page
+  component (decision #4) — this is the stage that habit starts in.
 - Page section skeleton now, even though only "Verified facts" has
   content until Stage 10: *Verified facts | Claims & allegations |
   Responses | Analysis/opinion | Source material* (per "Claim-preserving
-  content model"). Avoids retrofitting the layout once claims arrive.
+  content model"). Avoids retrofitting the layout once claims arrive. A
+  new sub-section under "Analysis/opinion" for `Affiliation` rows —
+  they're claim-shaped (attributed, status-labeled), so they belong in
+  the claim-bearing part of the layout, not "Verified facts."
+- Jurisdiction profile page — current chamber roster, current election
+  candidates (`Candidacy` rows for the active `Election`), past
+  officeholders/candidates, recent/current/upcoming bills for the
+  jurisdiction's active session, and the `Meeting` calendar. Same
+  primary-source-only, no-review-gate treatment as the politician page —
+  everything on it is Stage 1/3 government-record data.
+- "Quote archive": a `Claim` where `claimant_politician_id` is the
+  profiled politician is an *attributed* quote from them (still
+  status-labeled like any other claim — attribution isn't verification) —
+  the profile page's presenter layer filters to that subset for a
+  "quotes" section, needing no separate entity. Doesn't exist until Stage 10
+  (claim extraction), same as the rest of "Claims & allegations."
 - Lightweight "report an error" link (routes to an issue/email, not a
   moderation queue) — accountability sites get factual pushback and need
-  *some* channel for it even under an automation-first policy.
+  *some* channel for it even under an automation-first policy. Stage 16
+  replaces this with the real `CommunityFlag` submission form once
+  accounts exist; this stays as the interim channel until then.
 
 **Key decisions to confirm:**
 - Bio text source: likely scraped HTML from the legislature's own site,
@@ -1665,7 +2257,8 @@ aggregator path as everything else.
   government site, low risk) vs. asking before scraping even this.
 
 **Verification:** every seated legislator in the pilot state has a
-working profile page with real name/district/votes; spot-check 5-10
+working profile page with real name/district/votes; every chamber has a
+working jurisdiction page with a correct current roster; spot-check 5-10
 against official sources.
 
 ---
@@ -1676,10 +2269,21 @@ against official sources.
 - Radar chart: issue-area stance per politician (vote record ×
   issue-area tagging from Stage 1).
 - Voting alignment %: any two politicians, or politician vs. party
-  majority.
+  majority. This is the one place party is used as a comparison *axis* —
+  distinct from, and not in tension with, the search/filter decision
+  below.
 - Issue-area scorecard: tabular breakdown by topic.
 - Peer leaderboard: bills sponsored, attendance rate, bipartisanship
   score, scoped to one chamber.
+- Search/filter for finding politicians by bill, jurisdiction, or issue
+  area (e.g. "who's voted on bills touching privacy") — a query surface
+  over data that already exists by this stage (`BillSponsor`,
+  `BillIssueArea`, `VoteRecord`), not new schema.
+  **No party filter, by design** — this site's search/filter surfaces
+  are about what a politician has actually done (votes, sponsorships,
+  issue areas), not partisan affiliation; the party-comparison *view*
+  above is a different feature with a different purpose (an honest
+  comparison axis) and isn't affected by this.
 
 **Deferred:** the "stated priorities vs. actual voting record" and
 "promises vs. actions" *views* — see Stage 13. The underlying data isn't
@@ -1688,8 +2292,20 @@ rows by hand starting Stage 4), it's specifically the comparison
 presenter for that data that waits, so it isn't built against an empty
 table.
 
-**Key decisions to confirm:** radar chart axes = the issue-area taxonomy
-from Stage 1 — needs to be settled before this stage starts.
+**Key decisions to confirm:**
+- Radar chart axes = the issue-area taxonomy from Stage 1 — needs to be
+  settled before this stage starts.
+
+**Not in this stage, flagged for later:**
+- Admin control over which of this stage's presenter modules show and in
+  what order ("processor presenters" — an admin-configurable dashboard
+  rather than a fixed set of views). Genuine future idea, but not worth
+  designing against a single hard-coded set of four modules — revisit
+  once there are enough presenter modules (post-Stage 13) that "which
+  ones, in what order" is a real question rather than a hypothetical
+  one.
+- Full-text search over `Bill.title`/`summary_text` (and any provisions text the source provides),
+  for free-text queries that don't map onto any `IssueArea`.
 
 **Verification:** each view renders correctly against real Stage 3/5
 data for at least 3 politicians with meaningfully different voting
@@ -1711,7 +2327,7 @@ sits here instead of at the very end.
   console) and generic Docker deployment docs (Fly.io/Render/Railway).
 - Explicit walkthrough of a manual-upload-only deployment (every
   automated collector disabled) as a documented, supported path, not just
-  a theoretical one per decision #7.
+  a theoretical one per decision #6.
 
 **Verification:** a clean checkout + `docker compose up` produces a
 working site with no manual steps beyond env vars/API keys — and directly
@@ -1724,7 +2340,7 @@ admin build a complete profile by hand, end to end, not just in theory.
 ## Stage 8 — News & social collectors + aggregator normalization
 
 First stage that touches third-party content, but not yet claims —
-collection and normalization only. Per decision #7, none of this runs
+collection and normalization only. Per decision #6, none of this runs
 unless explicitly enabled; Stage 7's shipped product is unaffected by
 whether this stage has landed yet.
 
@@ -1770,6 +2386,10 @@ needs a resolved `ClaimTarget` to work from.
   level. Ambiguous matches flagged, never guessed.
 - Near-duplicate detection processor: flags likely-syndicated stories via
   `NewsItemRelation` (`relation_type: 'possible_near_duplicate'`).
+- `PipelineEvent` (see "Provenance chain & processor accountability"),
+  scoped to the four fields that matter for "what did the site say"
+  unless that decision is widened — these are the first processors whose
+  changes are worth an event log.
 - Extend the admin GUI's review queue (Stage 4's `ReviewAction` plumbing)
   to surface both: ambiguous entity matches and flagged near-duplicates,
   for a human to resolve what the pipeline deliberately didn't guess at.
@@ -1801,6 +2421,9 @@ defamation-resistant design incomplete in practice.
   post/statement addressing a claim gets linked with `stance: 'denies'`
   or `'confirms'`, adjusting `verification_status` accordingly. Heuristic,
   not guaranteed-complete.
+- `Affiliation` and `AffiliationSource` tables (see "Affiliations"), with
+  the same deferred "exactly one primary source" trigger as
+  `Claim`/`Promise`, plus its `processor_run_id` FK.
 - `ReviewAction`/lock enforcement made real, not just modeled: an admin
   setting `verification_locked` on a `Claim` must actually cause the next
   processor re-run to skip it.
@@ -1830,8 +2453,9 @@ stance section above.
 
 **Build:** none. Deliverable is a documented sign-off from actual legal
 counsel, covering at minimum: the claim-preserving pipeline's behavior,
-the disclaimer's wording/placement (Stage 12), the suppression/retraction
-process (Stage 10), and the non-defamation areas already flagged
+the methodology page's wording/placement (Stage 12), the
+suppression/retraction process (Stage 10), and the non-defamation areas
+already flagged
 (copyright, platform ToS, privacy, election law).
 
 **Verification:** the sign-off exists as an artifact (not just "we talked
@@ -1840,7 +2464,7 @@ publicly-reachable deployment.
 
 ---
 
-## Stage 12 — AI summaries + sitewide disclaimer
+## Stage 12 — AI summaries + methodology page
 
 **Build:**
 - AI-generated summaries as the last step of the claim-preserving
@@ -1848,11 +2472,91 @@ publicly-reachable deployment.
   LLM-over-raw-text pass — describes the *conversation* around a claim
   (who said what, whether disputed, what corroboration exists), not the
   claim restated as fact.
-- One sitewide disclaimer (persistent footer notice + dedicated
-  `/about/disclaimer` page), explained once. Each AI-summarized block
-  gets a badge linking to it — the disclaimer explains the system, it
-  doesn't substitute for the claim-preserving pipeline being careful,
-  which is what's actually doing the defamation-risk mitigation.
+- A profile-level AI summary, distinct from `Claim.generated_summary`
+  above — one paragraph synthesizing a politician's *sourced activity*
+  (bills sponsored, notable votes, promises made/kept) into readable
+  prose. Summarizes what the record *shows*, not what it *means* — an
+  "accomplishments" framing would be the site making a value judgment,
+  which the claim-preserving architecture exists to avoid. Same
+  prompt-injection discipline as claim extraction (decision #9) applies
+  here too, even though the input is the site's own structured data
+  rather than scraped text — a bill's `summary_text`
+  or provisions/highlights text still originates from a government
+  source and gets passed to the LLM as data, not instructions.
+  ```
+  ProfileSummary
+   ├── politician_id
+   ├── summary_text        — the rendered prose
+   ├── citations           — jsonb array of {sentence_index,
+   │                          sources: [{type: 'bill'|'vote'|'promise',
+   │                          id}]} — required structured output, not
+   │                          retrofitted after generation. See "Grounded
+   │                          generation, not post-hoc attribution" below
+   │                          for why this has to be part of the same
+   │                          generation call.
+   ├── processor_run_id    — FK → ProcessorRun
+   ├── citation_check_status — 'unchecked' | 'passed' | 'flagged' — see
+   │                          below; a summary with 'flagged' status
+   │                          doesn't publish until reviewed
+   └── created_at / updated_at
+  ```
+  **Grounded generation, not post-hoc attribution** — the processor's
+  prompt requires the model to emit `citations` as part of the same call
+  that produces `summary_text`, citing specific `Bill`/`Vote`/`Promise`
+  IDs it was given (the candidate set is already known — this processor
+  selected those specific rows before the LLM call, so the model is
+  citing from a bounded, known set, not recalling from nowhere).
+  Deliberately not doing this as a second LLM pass that reads the
+  finished summary and guesses which source backs which sentence
+  after the fact: a wrong-but-confidently-attached citation is a worse
+  failure than no citation, since it makes an inaccurate sentence look
+  more verified than it is — exactly the outcome the claim-preserving
+  architecture exists to prevent. A second pass *is* still worth having,
+  but as a verifier, not a generator: after generation, a cheap
+  check (a second LLM call or entailment scoring) confirms each cited
+  source actually supports its sentence; a mismatch sets
+  `citation_check_status: 'flagged'` and routes to the same admin-review
+  path as everything else with a `locked`-style gate, rather than
+  auto-publishing an uncertain citation.
+- Sitewide methodology page (persistent footer link + dedicated
+  `/about/methodology` page), explained once rather than repeated per
+  page. Each AI-summarized block gets a badge linking to it — the page
+  explains the system, it doesn't substitute for the claim-preserving
+  pipeline being careful, which is what's actually doing the
+  defamation-risk mitigation. Covers both `Claim.generated_summary` and
+  the profile-level summary above. As inspectable as the politicians'
+  records this site publishes, not an afterthought page — publishes:
+  - **Data sources** — which government API(s), which news/social
+    feeds, per jurisdiction.
+  - **Collection frequency** — the actual polling/crawl cadence, not
+    just "regularly."
+  - **Classification methodology** — how issue-area tagging works
+    (`tagging_method`: keyword-mapping vs. ML), stated plainly.
+  - **Topic taxonomy** — the `IssueArea` hierarchy itself, browsable, not
+    just referenced.
+  - **AI models/processors in use** — which processors call an LLM,
+    which model(s), sourced from `ProcessorRun.processor_name`/
+    `model_version` rather than hand-maintained prose that can drift
+    from what's actually running.
+  - **Verification methodology** — what each `verification_status`/
+    `fulfillment_status` value actually means (the enum definitions
+    already written out in "Claim-preserving content model" and the
+    `Promise` section above, republished here for a public audience).
+  - **Correction policy** — how `CommunityFlag`/`ReviewAction` work, from
+    a user's perspective: how to flag something, what happens next.
+  - **Conflict-of-interest policy** — how `Affiliation` rows get sourced
+    and reviewed, and the site's own (lack of) funding/advertising
+    relationships that could bias it.
+  - **Moderation policy** — suppression criteria (`SuppressionRule`),
+    stated in plain terms, not just the schema.
+  - **Known limitations** — the roll-call vote data gap from Stage 3 is
+    the concrete example on hand right now; whatever else is true at
+    ship time belongs here too, kept current rather than written once
+    and left stale.
+  - **Database schema/API documentation** — a link to this spec (or a
+    generated subset of it), for anyone who wants to verify a claim
+    about the system's own behavior instead of taking the methodology
+    page's word for it.
 
 **Key decisions to confirm:** which LLM/summarization approach fits
 "free/near-free" — likely a cheap small model or a strict
@@ -1860,7 +2564,15 @@ summarization budget/cache rather than summarizing on every page load.
 
 **Verification:** manual review of 10+ AI summaries against their source
 claims, confirming none upgrade a hedged/attributed claim into a bare
-assertion; disclaimer badge present on every AI-summarized item.
+assertion; same review for 10+ profile-level summaries, confirming every
+`citations` entry actually corresponds to a real row and every sentence
+traces back to a real `Bill`/`Vote`/`Promise` row with none containing a
+value judgment the underlying data doesn't directly support; the
+citation-check pass actually flags a deliberately-introduced bad citation
+in a test case, confirming it isn't a no-op; disclaimer badge present on
+every AI-summarized item, both kinds; methodology page covers every item
+in the list above, not just some of them — a checklist pass against that
+list, not just "the page exists."
 
 ---
 
@@ -1924,6 +2636,232 @@ finding about Stage 1's interface design, not just a Stage 15 bug.
 
 ---
 
+## Stage 16 — Public accounts & community flagging
+
+Appended rather than inserted earlier in the numbering, per "Staging
+notes"' rule that new features are new stages appended to the list —
+even though this could reasonably run any time after Stage 5 exists
+(there's something to flag) and Stage 4's `User`/`role` model exists
+(there's something to log into). Note the scope split from Stage 4:
+Stage 4 already builds the real `User` table and role column for a
+single seeded admin account; this stage is what turns that into a
+public-facing feature — self-service signup, the flagging UI, and the
+admin-side review queue for flags.
+
+**Build:**
+- Public signup/login using the `User` table from Stage 4 — no new
+  schema for this part, just the public-facing auth flow (Stage 4 only
+  needed a seeded account, not a signup form).
+- `CommunityFlag` table and submission form, replacing Stage 5's interim "report an
+  error" link — login required (decision #9's abuse-resistance
+  principle), captures the item being flagged, a note, and an optional
+  counter-evidence link.
+- Admin review queue for pending `CommunityFlag` rows, alongside the
+  existing `ReviewAction`-writing admin surface from Stage 4/10 — action
+  a flag (writes the corresponding `ReviewAction`, same as any other
+  admin correction) or dismiss it, either way setting `status`/
+  `resolved_by`/`resolved_at`.
+- "Promote to admin" admin action, setting another `User`'s `role` —
+  the actual capability the multi-admin model (decision #8) exists for.
+- Per-user rate limiting on `CommunityFlag` submission — see the
+  [DECISION TO CONFIRM] under "Public accounts & community flags" above.
+
+**Key decisions to confirm:**
+- Whether this needs its own pass through Stage 11's legal review gate —
+  user-generated content (the flag's `note`/`counter_evidence_url`) is a
+  new kind of third-party input this app stores and an admin acts on,
+  distinct from what Stage 11's original sign-off covered (the
+  claim-extraction/AI-summary pipeline). Recommend treating it as
+  in-scope for a legal check before this stage ships publicly, not
+  assuming Stage 11's original sign-off already covers it.
+- Rate-limit specifics (see above) — needs real usage data to tune, not
+  a number guessed in advance.
+
+**Verification:** a logged-in test user can submit a flag on a live
+`Claim`; it appears in the admin queue; actioning it writes a real
+`ReviewAction` and updates the flag's status; a second admin account
+promoted via the new action can log in and do the same, proving `role`
+is actually enforced and not just a column that exists.
+
+---
+
+## Stage 17 — Evidence explorer
+
+Last stage on the list deliberately — "click any sentence, see exactly
+what backs it" is real, committed scope, not an open idea, but it's
+sequenced last on purpose: it's a presenter-layer feature built almost
+entirely from data every earlier stage already produces as a side effect
+of the provenance-first design, not something that needed architecting
+in from the beginning. The one piece that genuinely needed a decision
+made *before* this stage — grounded citation generation for the
+profile-level summary — is Stage 12's `ProfileSummary.citations`, built
+back when the summary itself was built, specifically so this stage
+wouldn't need to retrofit attribution onto already-published prose.
+
+**What needs zero new schema, because it already exists:**
+- `Claim`/`Promise`/`Affiliation` — `ClaimSource`/`PromiseSource`/
+  `AffiliationSource` already link every one to its exact source(s);
+  `exact_text` is already the "raw data" excerpt, no need to reach into
+  `CollectedItem.raw_payload` at display time.
+- Government records (`Bill`, `Vote`, `Politician`, ...) — `source_item`
+  is already required NOT NULL; the normalized row's own fields already
+  are the "raw data" (no excerpt-extraction problem here at all, since
+  the fact *is* the row, not a quote pulled from a larger document).
+- `Claim.generated_summary`/`Promise` equivalents — inherit their parent
+  row's existing sources; no per-sentence attribution problem since the
+  summary is about one row.
+- Every case above also has `ProcessorRun`/`verification_set_at` (or
+  `retrieved_timestamp` for records with no verification step) already
+  available for the PROCESSING/LAST VERIFIED parts of the evidence
+  panel.
+
+**What this stage actually builds:**
+- The evidence panel/modal UI itself: CLAIM (the sentence/fact as
+  displayed) → EVIDENCE (the specific row(s)) → SOURCE
+  (`CollectedItem`'s `source_url`/`collector_type`) → RAW DATA
+  (`exact_text` or the normalized row's own fields, per the case above)
+  → PROCESSING (`ProcessorRun.processor_name`/`processor_version`/
+  `model_version`, where one exists) → LAST VERIFIED
+  (`verification_set_at`/`retrieved_timestamp`).
+- Multiple sources displayed as a list when more than one exists
+  (primary + supporting + contradicting) — not collapsed to one, per
+  `ClaimSource`'s existing `relation` field.
+- For `ProfileSummary` specifically: resolves each sentence's
+  `citations` entry to its `Bill`/`Vote`/`Promise` row(s) — the one
+  place this stage actually depends on an earlier stage (Stage 12)
+  having stored the right thing, rather than everything being derivable
+  from data that already existed regardless.
+- Frontend plumbing to carry span-to-source metadata through to the
+  client wherever claim-bearing or profile-summary text renders, plus a
+  lightweight lookup so clicking doesn't cost a full page load.
+
+**Key decisions to confirm:** none beyond what's already settled in
+Stage 12 — this stage is presentation work against an already-designed
+data shape, not new architecture.
+
+**Verification:** on a live profile page, clicking any claim-bearing
+sentence or profile-summary sentence opens a panel with a working
+CLAIM/EVIDENCE/SOURCE/RAW DATA/PROCESSING/LAST VERIFIED breakdown;
+a sentence backed by multiple sources shows all of them, correctly
+labeled by `relation`; a `ProfileSummary` with a `'flagged'`
+`citation_check_status` never renders its evidence panel as if the
+citation were confirmed.
+
+---
+
+## Stage 18 — Community processors
+
+Also last-things-done, deliberately, same reasoning as Stage 17: this is
+real, committed scope, not an open idea — but "let external contributors
+write `Processor` modules" is high-risk enough (running code this
+project didn't write) that it earns its own late stage rather than
+being folded into Stage 9/10's own processor work.
+
+**The load-bearing decision this whole stage rests on:** untrusted code
+never runs against production, full stop. Submissions go through GitHub
+(reusing its existing review/diff/CI/identity tooling instead of
+building a bespoke submission portal), pass an automated scan +
+one controlled, monitored, throwaway execution against fixture data
+(never real data, never real credentials), and only *after* a human
+admin has read the code and the scan report does an approved version
+ever touch anything real — at which point it's not "sandboxed
+third-party code" anymore, it's an ordinary first-party processor, held
+to the same standard as anything else in the codebase. This is why no
+persistent sandbox infrastructure needs building: the dangerous step
+(running unreviewed code against real data) is designed out of the
+pipeline entirely, not mitigated after the fact.
+
+**Build:**
+- `community-processors/` — a separate directory (not mixed into the
+  core `Processor` set), so core maintainers reviewing a submission and
+  each deployment's own admin choosing whether to *run* it stay two
+  distinct decisions (see `CommunityProcessor.is_active_core` below vs.
+  a per-deployment enable toggle, mirroring collectors' own
+  enable/disable pattern from decision #6) — approving a processor for
+  the core distribution shouldn't force every self-hoster to run it.
+- Documentation covering three things, published alongside the
+  methodology page (Stage 12): the `Processor` interface itself (input/
+  output schema, exactly which service-layer functions a processor may
+  call — this is the actual "API" being published; there is no live,
+  publicly-callable endpoint, only a documented contract to write code
+  against), the submission process (open a PR against
+  `community-processors/`), and what review/testing a submission will
+  go through before anything is merged — stated plainly so a submitter
+  knows "passed CI" doesn't mean "approved," a human review does.
+- A GitHub Actions workflow that runs on every PR (and every update to
+  an already-submitted processor — full pipeline reruns each time, no
+  fast path for a previously-approved author) and produces one
+  structured scan report, covering:
+  - **Static analysis** (no execution): banned/dangerous APIs
+    (`eval`/`Function`/`child_process`/dynamic `require`/direct `fs`
+    outside a scratch dir/direct `process.env` access), obfuscated or
+    pre-minified source (hard reject — submitted code has to be the
+    actual reviewable source), hardcoded secrets, and a dependency
+    manifest check (exact-pinned versions, every import backed by a
+    declared dependency).
+  - **Dependency/supply-chain scan:** known-vulnerability scan across
+    the full tree, install/postinstall script detection on any direct
+    or transitive dependency (the most common real-world supply-chain
+    attack vector — installed with `--ignore-scripts` for the scan
+    regardless), typosquat/low-reputation package flags.
+  - **One monitored execution** against fixture data, network- and
+    filesystem-instrumented: every outbound connection attempt (host,
+    port, protocol) logged and diffed against a declared allowlist the
+    submission states upfront, with raw-IP/non-standard-port/private-IP
+    connections (especially cloud metadata endpoints) flagged
+    specifically; any attempt to open a listening socket flagged as a
+    backdoor pattern; any filesystem access outside the module's own
+    directory/scratch space flagged; CPU/wall-clock/memory usage
+    measured against a budget; external API call rate and (if
+    applicable) LLM token cost measured against a cap.
+  - **Correctness/output validation**, from that same monitored run:
+    output matches the declared schema, the same input produces the
+    same output on a repeat run (reproducibility — feeds `ProcessorRun`
+    the same way any other processor's run does), output contains no
+    injectable content (same concern as sanitizing collected input, now
+    applied to processor *output*), and output only touches the
+    fields/tables its declared processor type is allowed to write (the
+    `[aggregator]`/`[processor: X]` boundary already named in
+    "Validation & acceptance criteria," now checked against a processor
+    whose author isn't a core maintainer).
+  ```
+  CommunityProcessor
+   ├── name
+   ├── repo_url / pr_reference
+   ├── submitted_by        — GitHub identity, not this app's own User
+   │                          table — no reason to require a site
+   │                          account just to open a PR
+   ├── version              — the approved commit hash
+   ├── scan_report          — jsonb; the full static+dynamic findings
+   │                          above, kept as the actual record an admin
+   │                          reviewed, not just a pass/fail flag
+   ├── approved_by          — FK → User (admin) — the accountability
+   │                          record: whoever approved a version is the
+   │                          responsible party for its effects, same
+   │                          principle as ReviewAction.actor
+   ├── approved_at
+   └── is_active_core       — whether the core distribution ships this
+                              version at all; a deployment's own
+                              per-processor enable toggle is a separate,
+                              later decision each operator makes for
+                              themselves
+  ```
+
+**Key decisions to confirm:** none beyond what's already settled above —
+this stage is a pipeline and a review discipline, not new open design
+questions.
+
+**Verification:** a deliberately-planted-bad test submission (a
+postinstall script, a call to an undeclared host, output that writes
+outside its declared scope) actually gets caught by the scan and never
+reaches merge — a dry run of the pipeline against known-bad input, not
+just confirming it works against known-good input; a legitimately clean
+submission passes the scan, gets reviewed, merged, and runs correctly
+once an admin flips it active; `approved_by` correctly records who
+approved it.
+
+---
+
 ## Open items not yet scheduled
 
 - Additional state adapters beyond the pilot state (explicitly optional
@@ -1931,45 +2869,20 @@ finding about Stage 1's interface design, not just a Stage 15 bug.
 - Contributor docs for someone else standing up their own jurisdiction
   adapter (natural follow-up once 2 adapters exist and the interface has
   proven itself against real, different data shapes).
-
----
-
-## Next step
-
-Stages 0-2 are all done and verified end-to-end — schema generated,
-migrated against real Postgres from a genuinely clean volume, and every
-constraint that matters tested directly, not just documented as if it
-holds: the provenance `NOT NULL`s, the `Term` exclusion constraint,
-`PoliticianExternalId`'s uniqueness, `ClaimSource`'s one-primary-per-claim
-partial unique index, and — the one that needed a real fix, not just a
-test — that a `Claim`/`Promise` can't commit with zero source rows.
-
-That last one was a genuine gap, not just a missing test: nothing in the
-schema as originally written actually enforced it. `ClaimSource`/
-`PromiseSource` only FK *to* `Claim`/`Promise`, so nothing stopped a
-sourceless row from existing. Fixed with the hand-written triggers in
-`0001_narrative_oversight_schema.sql` — `DEFERRABLE INITIALLY DEFERRED`
-constraint triggers on `claims`/`promises`, checked at commit rather than
-at the row's own insert, so the service layer can insert the parent row
-and its primary source in either order within one transaction. Also fires
-on DELETE/UPDATE of `claim_sources`/`promise_sources`, so a primary
-source can't be re-parented, deleted, or demoted out from under an
-existing claim/promise afterward either — not just insert-time, per a
-second independent review that caught the first version only checking
-the parent row's own insert.
-
-**Left open from Stage 1, not blocking Stage 3:** the issue-area taxonomy
-[DECISION TO CONFIRM] — the `issue_areas` table exists but is unseeded;
-no fixed list has actually been chosen yet. Needs an answer before Stage
-6 (radar chart) or Stage 9 (ML tagging upgrade) can use it.
-
-**Not yet built, worth naming so it isn't assumed to exist:** the service
-layer only covers `collected_items`, `jurisdictions`/`chambers`, and
-`politicians` — enough to support Stage 1/2's own tests, not a complete
-service layer for every entity now in the schema. Stage 3 will need
-`bills`/`votes`/`terms` service functions before it can actually ingest
-anything; Stage 8-10 will need `news_items`/`claims`/`promises` ones.
-
-Stage 3 (pilot-state government data ingestion) is next — no open
-decisions block it from starting beyond its own stated research task
-(confirming what the pilot state's legislature API actually exposes).
+- **DB snapshots for archival/diffing** — periodic full-database
+  snapshots so "what did this politician's profile say six months ago"
+  is answerable, beyond what `created_at`/`updated_at` and
+  `ReviewAction`'s per-field audit trail already give row-by-row. Real
+  idea, not scoped to a stage — revisit once there's enough live data for
+  "diff over time" to be something people actually want, not just
+  theoretically nice.
+- Two things worth noting explicitly so they don't get reintroduced as
+  "gaps" later, since both are already fully handled by existing design:
+  **exact-duplicate collected data** is already prevented, not just
+  marked, by `collected_items`'s
+  `UNIQUE (content_hash, source_url)` plus `createCollectedItem`'s
+  upsert-and-return-existing-id behavior — a re-poll of unchanged content
+  never reaches a processor a second time. **A modular/pluggable
+  interface for different government APIs** is already what
+  `JurisdictionAdapter` (decision #3) is — Stage 15's Congress adapter is
+  the proof of that, not a second mechanism.

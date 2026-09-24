@@ -7,8 +7,10 @@ export * from "./jurisdictions";
 export * from "./people";
 export * from "./legislation";
 export * from "./votes";
+export * from "./committees";
 
 // Stage 2
+export * from "./processor-runs";
 export * from "./news";
 export * from "./claims";
 export * from "./promises";

@@ -1,6 +1,6 @@
 // "Votes" — see SPEC.md "Aggregator output schema".
 
-import { date, integer, pgEnum, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
+import { date, foreignKey, index, integer, pgEnum, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
 import { idColumn, timestampColumns } from "./_shared";
 import { collectedItems } from "./collected-items";
 import { bills } from "./legislation";
@@ -38,7 +38,11 @@ export const votes = pgTable(
     // the adapter either drops those votes (silently wrong
     // attendance-rate denominators) or fabricates a Bill row for
     // something that isn't one.
-    billId: uuid("bill_id").references(() => bills.id),
+    // No column-level .references() — the composite FK below is this
+    // column's FK, and additionally guarantees the bill belongs to
+    // sessionId. MATCH SIMPLE skips it when billId is NULL (procedural
+    // votes), which is exactly right.
+    billId: uuid("bill_id"),
     // Motion/resolution text, for votes with no bill, or to distinguish
     // multiple votes on the same bill at the same stage.
     description: text("description"),
@@ -63,7 +67,15 @@ export const votes = pgTable(
       .references(() => collectedItems.id),
     ...timestampColumns,
   },
-  (table) => [unique().on(table.sessionId, table.externalVoteId)],
+  (table) => [
+    unique().on(table.sessionId, table.externalVoteId),
+    foreignKey({
+      name: "votes_bill_in_session_fk",
+      columns: [table.billId, table.sessionId],
+      foreignColumns: [bills.id, bills.sessionId],
+    }),
+    index("votes_bill_idx").on(table.billId),
+  ],
 );
 
 export const voteValueEnum = pgEnum("vote_value", ["yea", "nay", "present", "absent", "excused"]);
@@ -91,5 +103,9 @@ export const voteRecords = pgTable(
     ...timestampColumns,
   },
   // One politician can't have two votes on the same roll call.
-  (table) => [unique().on(table.voteId, table.politicianId)],
+  (table) => [
+    unique().on(table.voteId, table.politicianId),
+    // "This politician's votes" — attendance/alignment/profile queries.
+    index("vote_records_politician_idx").on(table.politicianId),
+  ],
 );

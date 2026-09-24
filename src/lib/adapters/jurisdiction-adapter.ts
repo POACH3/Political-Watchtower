@@ -7,8 +7,16 @@
 // Shapes here are what a collector fetches, in the source's own
 // vocabulary (external IDs, raw status/vote-value strings) — not DB
 // rows. Resolving those into real UUIDs/FKs is the aggregator's job.
+//
+// Provenance: every fetchX returns `Collected<T>[]` — records paired with
+// the verbatim response they were parsed from (`SourceSnapshot`), one
+// entry per underlying HTTP response. Adapters never touch the database;
+// the aggregator writes one `CollectedItem` per snapshot and stamps every
+// record parsed from it with that row's id as its `source_item`. Without
+// the snapshot, no government-record row could satisfy its NOT NULL
+// `source_item`.
 
-import type { Collector } from "@/lib/pipeline/types";
+import type { Collected, Collector } from "@/lib/pipeline/types";
 
 export interface RawSession {
   externalSessionId: string;
@@ -26,6 +34,7 @@ export interface RawDistrict {
   externalDistrictId: string;
   name?: string;
   validFrom: string; // ISO date
+  validTo?: string; // ISO date; omitted = currently in effect
 }
 
 export interface RawLegislator {
@@ -38,6 +47,7 @@ export interface RawLegislator {
   districtExternalId: string;
   party?: string;
   termStartDate: string; // ISO date
+  termEndDate?: string; // ISO date; omitted = currently serving
 }
 
 export interface RawBillSponsor {
@@ -53,6 +63,12 @@ export interface RawBill {
   fullTextUrl?: string;
   introducedDate?: string; // ISO date
   rawStatus?: string;
+  // The source's own topic/subject strings, if it provides them — a
+  // strong input for issue-area tagging, but the schema has no aggregator-
+  // owned home for them (BillIssueArea is processor-only). The tagging
+  // processor reads them back out of the bill's CollectedItem.raw_payload;
+  // they're surfaced here so an adapter author knows to keep the payload.
+  subjects?: string[];
   sponsors: RawBillSponsor[];
 }
 
@@ -73,25 +89,81 @@ export interface RawVote {
   records: RawVoteRecord[];
 }
 
+export interface RawCommitteeMembership {
+  legislatorExternalId: string;
+  role?: string; // jurisdiction-defined, e.g. 'chair'
+}
+
+export interface RawCommittee {
+  externalCommitteeId: string;
+  chamberSlug?: string; // omitted for a joint/interim committee
+  name: string;
+  memberships: RawCommitteeMembership[];
+}
+
+export interface RawMeeting {
+  externalMeetingId: string;
+  // Exactly one of the two: a committee meeting or a chamber floor session.
+  committeeExternalId?: string;
+  chamberSlug?: string;
+  scheduledAt: string; // ISO timestamp
+  location?: string;
+  agendaUrl?: string;
+}
+
+export interface RawCandidacy {
+  candidateExternalId: string; // same id space as RawLegislator.externalId
+  party?: string;
+  outcome?: "won" | "lost" | "withdrew" | "pending";
+}
+
+export interface RawElection {
+  chamberSlug?: string; // omitted for a statewide/at-large race
+  districtExternalId?: string;
+  electionDate: string; // ISO date
+  electionType: "general" | "primary" | "special" | "runoff" | "other";
+  candidacies: RawCandidacy[];
+}
+
+/**
+ * What `collect()` yields: one tagged record per parsed item, so a single
+ * full sync can flow through the same `Collected<T>` envelope every other
+ * collector (Stage 8's RSS/GDELT/oEmbed) uses. Batches come back in
+ * foreign-key dependency order — sessions, chambers, districts,
+ * legislators, committees, meetings, bills, votes, elections — so an
+ * aggregator can process them in order without a second pass.
+ */
+export type RawRecord =
+  | { kind: "session"; data: RawSession }
+  | { kind: "chamber"; data: RawChamber }
+  | { kind: "district"; data: RawDistrict }
+  | { kind: "legislator"; data: RawLegislator }
+  | { kind: "committee"; data: RawCommittee }
+  | { kind: "meeting"; data: RawMeeting }
+  | { kind: "bill"; data: RawBill }
+  | { kind: "vote"; data: RawVote }
+  | { kind: "election"; data: RawElection };
+
 // Extends Collector (see "Four-layer modular pipeline") rather than
-// sitting alongside it disconnected — a second independent review found
-// the two interfaces had no relationship at all in the original design,
-// which meant nothing actually tied a JurisdictionAdapter to the
-// collector contract SPEC.md says it implements. `collect()` here is a
-// convenience full-sync entry point (fetch legislators, the baseline any
-// sync needs); the specific fetchX methods remain available for
-// finer-grained operations (e.g. the Stage 4 admin GUI refreshing just
-// one thing). Stage 3 will likely expand collect()'s orchestration once
-// there's a real sync loop to design it against — this only fixes the
-// interfaces being connected at all, not the full sync strategy.
-export interface JurisdictionAdapter extends Collector<RawLegislator> {
+// sitting alongside it disconnected. `collect()` is the full-sync entry
+// point (every fetchX below, in dependency order); the specific fetchX
+// methods remain available for finer-grained operations (e.g. the Stage 4
+// admin GUI refreshing just one thing).
+export interface JurisdictionAdapter extends Collector<RawRecord> {
   readonly jurisdictionSlug: string;
-  fetchSessions(): Promise<RawSession[]>;
-  fetchChambers(): Promise<RawChamber[]>;
-  fetchDistricts(): Promise<RawDistrict[]>;
-  fetchLegislators(): Promise<RawLegislator[]>;
-  fetchBills(sessionExternalId: string): Promise<RawBill[]>;
-  fetchVotes(sessionExternalId: string): Promise<RawVote[]>;
+  fetchSessions(): Promise<Collected<RawSession>[]>;
+  fetchChambers(): Promise<Collected<RawChamber>[]>;
+  fetchDistricts(): Promise<Collected<RawDistrict>[]>;
+  fetchLegislators(): Promise<Collected<RawLegislator>[]>;
+  fetchCommittees(): Promise<Collected<RawCommittee>[]>;
+  fetchMeetings(): Promise<Collected<RawMeeting>[]>;
+  fetchBills(sessionExternalId: string): Promise<Collected<RawBill>[]>;
+  // Roll-call data isn't published by every jurisdiction (the pilot state
+  // is one — see SPEC.md Stage 3), so a manual-upload-only path has to be
+  // able to stand in; an adapter with no vote source returns [].
+  fetchVotes(sessionExternalId: string): Promise<Collected<RawVote>[]>;
+  // Optional: not every source publishes elections/candidacies.
+  fetchElections?(): Promise<Collected<RawElection>[]>;
 }
 
 // --- Mock adapter — fake data, no network calls ---
@@ -154,29 +226,100 @@ const mockVotes: RawVote[] = [
   },
 ];
 
+const mockCommittees: RawCommittee[] = [
+  {
+    externalCommitteeId: "C1",
+    chamberSlug: "house",
+    name: "Mock Judiciary Committee",
+    memberships: [{ legislatorExternalId: "mock-001", role: "chair" }],
+  },
+];
+
+const mockMeetings: RawMeeting[] = [
+  {
+    externalMeetingId: "M1",
+    committeeExternalId: "C1",
+    scheduledAt: "2026-02-10T15:00:00Z",
+    location: "Room 100",
+  },
+  { externalMeetingId: "F1", chamberSlug: "senate", scheduledAt: "2026-02-11T16:00:00Z" },
+];
+
+const MOCK_BASE_URL = "mock://mock-state";
+
+// Wraps parsed records in the snapshot they "came from" — for the mock,
+// the JSON text of the records themselves stands in for a raw response.
+function mockBatch<T>(path: string, records: T[]): Collected<T>[] {
+  return [
+    {
+      snapshot: {
+        sourceUrl: `${MOCK_BASE_URL}/${path}`,
+        contentType: "application/json",
+        rawPayload: JSON.stringify(records),
+      },
+      records,
+    },
+  ];
+}
+
+function tagged<T, K extends RawRecord["kind"]>(kind: K, batches: Collected<T>[]): Collected<RawRecord>[] {
+  return batches.map((batch) => ({
+    snapshot: batch.snapshot,
+    records: batch.records.map((data) => ({ kind, data }) as unknown as RawRecord),
+  }));
+}
+
 export const mockJurisdictionAdapter: JurisdictionAdapter = {
   collectorId: "mock-jurisdiction-adapter",
   collectorType: "api_poll",
   jurisdictionSlug: "mock-state",
   async collect() {
-    return mockLegislators;
+    const sessions = await this.fetchSessions();
+    const votes = await Promise.all(
+      sessions.flatMap((batch) => batch.records).map((session) => this.fetchVotes(session.externalSessionId)),
+    );
+    const bills = await Promise.all(
+      sessions.flatMap((batch) => batch.records).map((session) => this.fetchBills(session.externalSessionId)),
+    );
+    return [
+      ...tagged("session", sessions),
+      ...tagged("chamber", await this.fetchChambers()),
+      ...tagged("district", await this.fetchDistricts()),
+      ...tagged("legislator", await this.fetchLegislators()),
+      ...tagged("committee", await this.fetchCommittees()),
+      ...tagged("meeting", await this.fetchMeetings()),
+      ...tagged("bill", bills.flat()),
+      ...tagged("vote", votes.flat()),
+    ];
   },
   async fetchSessions() {
-    return mockSessions;
+    return mockBatch("sessions", mockSessions);
   },
   async fetchChambers() {
-    return mockChambers;
+    return mockBatch("chambers", mockChambers);
   },
   async fetchDistricts() {
-    return mockDistricts;
+    return mockBatch("districts", mockDistricts);
   },
   async fetchLegislators() {
-    return mockLegislators;
+    return mockBatch("legislators", mockLegislators);
+  },
+  async fetchCommittees() {
+    return mockBatch("committees", mockCommittees);
+  },
+  async fetchMeetings() {
+    return mockBatch("meetings", mockMeetings);
   },
   async fetchBills(sessionExternalId) {
-    return mockBills.filter((bill) => bill.sessionExternalId === sessionExternalId);
+    return mockBatch(
+      `sessions/${sessionExternalId}/bills`,
+      mockBills.filter((bill) => bill.sessionExternalId === sessionExternalId),
+    );
   },
   async fetchVotes(sessionExternalId) {
-    return mockVotes.filter((vote) => vote.sessionExternalId === sessionExternalId);
+    return mockBatch(
+      `sessions/${sessionExternalId}/votes`,
+      mockVotes.filter((vote) => vote.sessionExternalId === sessionExternalId),
+    );
   },
 };

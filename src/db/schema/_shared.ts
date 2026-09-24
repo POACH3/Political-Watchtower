@@ -3,7 +3,8 @@
 // schema": "every entity gets a UUID `id` + `created_at`/`updated_at`,
 // omitted below for brevity."
 
-import { timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { check, timestamp, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 export const idColumn = {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -26,3 +27,20 @@ export const timestampColumns = {
 export const createdAtColumn = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 };
+
+// Soft-suppression fields (Claim, NewsItem) must agree with each other:
+// a suppressed row always carries when/why, an unsuppressed one never
+// does. Without this, `is_suppressed = true` with no timestamp/reason
+// was accepted — and suppression is a legal control (see SPEC.md
+// "Retraction & suppression"), so an unexplained one is a defect.
+// Clearing suppression clears both fields; the history of that lives in
+// ReviewAction, not on the row.
+export function suppressionConsistentCheck(
+  name: string,
+  t: { isSuppressed: AnyPgColumn; suppressedAt: AnyPgColumn; suppressionReason: AnyPgColumn },
+) {
+  return check(
+    name,
+    sql`(${t.isSuppressed} AND ${t.suppressedAt} IS NOT NULL AND ${t.suppressionReason} IS NOT NULL AND length(btrim(${t.suppressionReason})) > 0) OR (NOT ${t.isSuppressed} AND ${t.suppressedAt} IS NULL AND ${t.suppressionReason} IS NULL)`,
+  );
+}

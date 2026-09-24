@@ -1,5 +1,5 @@
 {
-  "id": "2f6b53b1-48b8-41af-8951-d3f0bb1c290e",
+  "id": "71842f67-03b8-44a6-8f2c-9b3c55eadb96",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -176,7 +176,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "candidacies_election_idx": {
+          "name": "candidacies_election_idx",
+          "columns": [
+            {
+              "expression": "election_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "candidacies_politician_id_politicians_id_fk": {
           "name": "candidacies_politician_id_politicians_id_fk",
@@ -226,6 +242,14 @@
           "columns": [
             "politician_id",
             "election_id"
+          ]
+        },
+        "candidacies_id_politician_id_unique": {
+          "name": "candidacies_id_politician_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "politician_id"
           ]
         }
       },
@@ -301,6 +325,14 @@
           "columns": [
             "jurisdiction_id",
             "slug"
+          ]
+        },
+        "chambers_id_jurisdiction_id_unique": {
+          "name": "chambers_id_jurisdiction_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "jurisdiction_id"
           ]
         }
       },
@@ -390,10 +422,23 @@
             "external_district_id",
             "valid_from"
           ]
+        },
+        "districts_id_chamber_id_unique": {
+          "name": "districts_id_chamber_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "chamber_id"
+          ]
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "districts_dates_ordered": {
+          "name": "districts_dates_ordered",
+          "value": "\"districts\".\"valid_to\" IS NULL OR \"districts\".\"valid_to\" >= \"districts\".\"valid_from\""
+        }
+      },
       "isRLSEnabled": false
     },
     "public.elections": {
@@ -459,7 +504,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "elections_district_idx": {
+          "name": "elections_district_idx",
+          "columns": [
+            {
+              "expression": "district_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "elections_jurisdiction_id_jurisdictions_id_fk": {
           "name": "elections_jurisdiction_id_jurisdictions_id_fk",
@@ -467,32 +528,6 @@
           "tableTo": "jurisdictions",
           "columnsFrom": [
             "jurisdiction_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "elections_chamber_id_chambers_id_fk": {
-          "name": "elections_chamber_id_chambers_id_fk",
-          "tableFrom": "elections",
-          "tableTo": "chambers",
-          "columnsFrom": [
-            "chamber_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "elections_district_id_districts_id_fk": {
-          "name": "elections_district_id_districts_id_fk",
-          "tableFrom": "elections",
-          "tableTo": "districts",
-          "columnsFrom": [
-            "district_id"
           ],
           "columnsTo": [
             "id"
@@ -512,13 +547,43 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "elections_chamber_in_jurisdiction_fk": {
+          "name": "elections_chamber_in_jurisdiction_fk",
+          "tableFrom": "elections",
+          "tableTo": "chambers",
+          "columnsFrom": [
+            "chamber_id",
+            "jurisdiction_id"
+          ],
+          "columnsTo": [
+            "id",
+            "jurisdiction_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "elections_district_in_chamber_fk": {
+          "name": "elections_district_in_chamber_fk",
+          "tableFrom": "elections",
+          "tableTo": "districts",
+          "columnsFrom": [
+            "district_id",
+            "chamber_id"
+          ],
+          "columnsTo": [
+            "id",
+            "chamber_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "elections_jurisdiction_id_chamber_id_district_id_election_date_election_type_unique": {
           "name": "elections_jurisdiction_id_chamber_id_district_id_election_date_election_type_unique",
-          "nullsNotDistinct": false,
+          "nullsNotDistinct": true,
           "columns": [
             "jurisdiction_id",
             "chamber_id",
@@ -529,7 +594,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "elections_district_requires_chamber": {
+          "name": "elections_district_requires_chamber",
+          "value": "\"elections\".\"district_id\" IS NULL OR \"elections\".\"chamber_id\" IS NOT NULL"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.jurisdictions": {
@@ -691,7 +761,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "legislative_sessions_dates_ordered": {
+          "name": "legislative_sessions_dates_ordered",
+          "value": "\"legislative_sessions\".\"end_date\" IS NULL OR \"legislative_sessions\".\"end_date\" >= \"legislative_sessions\".\"start_date\""
+        }
+      },
       "isRLSEnabled": false
     },
     "public.politician_aliases": {
@@ -759,7 +834,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "politician_aliases_alias_text_lower_idx": {
+          "name": "politician_aliases_alias_text_lower_idx",
+          "columns": [
+            {
+              "expression": "lower(\"alias_text\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "politician_aliases_politician_id_politicians_id_fk": {
           "name": "politician_aliases_politician_id_politicians_id_fk",
@@ -1037,7 +1128,60 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "terms_chamber_idx": {
+          "name": "terms_chamber_idx",
+          "columns": [
+            {
+              "expression": "chamber_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "terms_district_idx": {
+          "name": "terms_district_idx",
+          "columns": [
+            {
+              "expression": "district_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "terms_current_idx": {
+          "name": "terms_current_idx",
+          "columns": [
+            {
+              "expression": "chamber_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "district_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"terms\".\"end_date\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "terms_politician_id_politicians_id_fk": {
           "name": "terms_politician_id_politicians_id_fk",
@@ -1065,32 +1209,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "terms_district_id_districts_id_fk": {
-          "name": "terms_district_id_districts_id_fk",
-          "tableFrom": "terms",
-          "tableTo": "districts",
-          "columnsFrom": [
-            "district_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "terms_candidacy_id_candidacies_id_fk": {
-          "name": "terms_candidacy_id_candidacies_id_fk",
-          "tableFrom": "terms",
-          "tableTo": "candidacies",
-          "columnsFrom": [
-            "candidacy_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "terms_source_item_collected_items_id_fk": {
           "name": "terms_source_item_collected_items_id_fk",
           "tableFrom": "terms",
@@ -1100,6 +1218,36 @@
           ],
           "columnsTo": [
             "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "terms_district_in_chamber_fk": {
+          "name": "terms_district_in_chamber_fk",
+          "tableFrom": "terms",
+          "tableTo": "districts",
+          "columnsFrom": [
+            "district_id",
+            "chamber_id"
+          ],
+          "columnsTo": [
+            "id",
+            "chamber_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "terms_candidacy_is_own_fk": {
+          "name": "terms_candidacy_is_own_fk",
+          "tableFrom": "terms",
+          "tableTo": "candidacies",
+          "columnsFrom": [
+            "candidacy_id",
+            "politician_id"
+          ],
+          "columnsTo": [
+            "id",
+            "politician_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -1118,7 +1266,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "terms_dates_ordered": {
+          "name": "terms_dates_ordered",
+          "value": "\"terms\".\"end_date\" IS NULL OR \"terms\".\"end_date\" > \"terms\".\"start_date\""
+        }
+      },
       "isRLSEnabled": false
     },
     "public.bill_issue_areas": {
@@ -1166,7 +1319,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "bill_issue_areas_issue_area_idx": {
+          "name": "bill_issue_areas_issue_area_idx",
+          "columns": [
+            {
+              "expression": "issue_area_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "bill_issue_areas_bill_id_bills_id_fk": {
           "name": "bill_issue_areas_bill_id_bills_id_fk",
@@ -1261,7 +1430,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "bill_sponsors_politician_idx": {
+          "name": "bill_sponsors_politician_idx",
+          "columns": [
+            {
+              "expression": "politician_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "bill_sponsors_bill_id_bills_id_fk": {
           "name": "bill_sponsors_bill_id_bills_id_fk",
@@ -1437,6 +1622,14 @@
             "session_id",
             "external_bill_id"
           ]
+        },
+        "bills_id_session_id_unique": {
+          "name": "bills_id_session_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "session_id"
+          ]
         }
       },
       "policies": {},
@@ -1453,6 +1646,12 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "parent_issue_area_id": {
+          "name": "parent_issue_area_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "name": {
           "name": "name",
@@ -1487,8 +1686,38 @@
           "default": "now()"
         }
       },
-      "indexes": {},
-      "foreignKeys": {},
+      "indexes": {
+        "issue_areas_parent_idx": {
+          "name": "issue_areas_parent_idx",
+          "columns": [
+            {
+              "expression": "parent_issue_area_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "issue_areas_parent_issue_area_id_issue_areas_id_fk": {
+          "name": "issue_areas_parent_issue_area_id_issue_areas_id_fk",
+          "tableFrom": "issue_areas",
+          "tableTo": "issue_areas",
+          "columnsFrom": [
+            "parent_issue_area_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "issue_areas_slug_unique": {
@@ -1500,7 +1729,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "issue_areas_not_self_parent": {
+          "name": "issue_areas_not_self_parent",
+          "value": "\"issue_areas\".\"parent_issue_area_id\" <> \"issue_areas\".\"id\""
+        }
+      },
       "isRLSEnabled": false
     },
     "public.vote_records": {
@@ -1560,7 +1794,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "vote_records_politician_idx": {
+          "name": "vote_records_politician_idx",
+          "columns": [
+            {
+              "expression": "politician_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "vote_records_vote_id_votes_id_fk": {
           "name": "vote_records_vote_id_votes_id_fk",
@@ -1722,7 +1972,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "votes_bill_idx": {
+          "name": "votes_bill_idx",
+          "columns": [
+            {
+              "expression": "bill_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "votes_chamber_id_chambers_id_fk": {
           "name": "votes_chamber_id_chambers_id_fk",
@@ -1750,19 +2016,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "votes_bill_id_bills_id_fk": {
-          "name": "votes_bill_id_bills_id_fk",
-          "tableFrom": "votes",
-          "tableTo": "bills",
-          "columnsFrom": [
-            "bill_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "votes_source_item_collected_items_id_fk": {
           "name": "votes_source_item_collected_items_id_fk",
           "tableFrom": "votes",
@@ -1772,6 +2025,21 @@
           ],
           "columnsTo": [
             "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "votes_bill_in_session_fk": {
+          "name": "votes_bill_in_session_fk",
+          "tableFrom": "votes",
+          "tableTo": "bills",
+          "columnsFrom": [
+            "bill_id",
+            "session_id"
+          ],
+          "columnsTo": [
+            "id",
+            "session_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -1790,6 +2058,359 @@
       },
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.committee_memberships": {
+      "name": "committee_memberships",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "committee_id": {
+          "name": "committee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "politician_id": {
+          "name": "politician_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_item": {
+          "name": "source_item",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "committee_memberships_committee_id_committees_id_fk": {
+          "name": "committee_memberships_committee_id_committees_id_fk",
+          "tableFrom": "committee_memberships",
+          "tableTo": "committees",
+          "columnsFrom": [
+            "committee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "committee_memberships_politician_id_politicians_id_fk": {
+          "name": "committee_memberships_politician_id_politicians_id_fk",
+          "tableFrom": "committee_memberships",
+          "tableTo": "politicians",
+          "columnsFrom": [
+            "politician_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "committee_memberships_source_item_collected_items_id_fk": {
+          "name": "committee_memberships_source_item_collected_items_id_fk",
+          "tableFrom": "committee_memberships",
+          "tableTo": "collected_items",
+          "columnsFrom": [
+            "source_item"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "committee_memberships_committee_id_politician_id_unique": {
+          "name": "committee_memberships_committee_id_politician_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "committee_id",
+            "politician_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.committees": {
+      "name": "committees",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "jurisdiction_id": {
+          "name": "jurisdiction_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "chamber_id": {
+          "name": "chamber_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_committee_id": {
+          "name": "external_committee_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_item": {
+          "name": "source_item",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "committees_jurisdiction_id_jurisdictions_id_fk": {
+          "name": "committees_jurisdiction_id_jurisdictions_id_fk",
+          "tableFrom": "committees",
+          "tableTo": "jurisdictions",
+          "columnsFrom": [
+            "jurisdiction_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "committees_source_item_collected_items_id_fk": {
+          "name": "committees_source_item_collected_items_id_fk",
+          "tableFrom": "committees",
+          "tableTo": "collected_items",
+          "columnsFrom": [
+            "source_item"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "committees_chamber_in_jurisdiction_fk": {
+          "name": "committees_chamber_in_jurisdiction_fk",
+          "tableFrom": "committees",
+          "tableTo": "chambers",
+          "columnsFrom": [
+            "chamber_id",
+            "jurisdiction_id"
+          ],
+          "columnsTo": [
+            "id",
+            "jurisdiction_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "committees_jurisdiction_id_external_committee_id_unique": {
+          "name": "committees_jurisdiction_id_external_committee_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "jurisdiction_id",
+            "external_committee_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.meetings": {
+      "name": "meetings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "committee_id": {
+          "name": "committee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "chamber_id": {
+          "name": "chamber_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_meeting_id": {
+          "name": "external_meeting_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scheduled_at": {
+          "name": "scheduled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "location": {
+          "name": "location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "agenda_url": {
+          "name": "agenda_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_item": {
+          "name": "source_item",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "meetings_committee_id_committees_id_fk": {
+          "name": "meetings_committee_id_committees_id_fk",
+          "tableFrom": "meetings",
+          "tableTo": "committees",
+          "columnsFrom": [
+            "committee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "meetings_chamber_id_chambers_id_fk": {
+          "name": "meetings_chamber_id_chambers_id_fk",
+          "tableFrom": "meetings",
+          "tableTo": "chambers",
+          "columnsFrom": [
+            "chamber_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "meetings_source_item_collected_items_id_fk": {
+          "name": "meetings_source_item_collected_items_id_fk",
+          "tableFrom": "meetings",
+          "tableTo": "collected_items",
+          "columnsFrom": [
+            "source_item"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "meetings_committee_id_chamber_id_external_meeting_id_unique": {
+          "name": "meetings_committee_id_chamber_id_external_meeting_id_unique",
+          "nullsNotDistinct": true,
+          "columns": [
+            "committee_id",
+            "chamber_id",
+            "external_meeting_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "meetings_exactly_one_owner": {
+          "name": "meetings_exactly_one_owner",
+          "value": "num_nonnulls(\"meetings\".\"committee_id\", \"meetings\".\"chamber_id\") = 1"
+        }
+      },
       "isRLSEnabled": false
     }
   },

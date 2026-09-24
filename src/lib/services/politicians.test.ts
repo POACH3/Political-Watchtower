@@ -3,22 +3,9 @@ import { sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/db";
 import { politicians } from "@/db/schema";
-import { pgErrorMessage } from "@/lib/test-utils";
-import { createCollectedItem } from "./collected-items";
+import { makeSourceItem, pgErrorMessage } from "@/lib/test-utils";
 import { upsertJurisdiction } from "./jurisdictions";
 import { getPoliticianProfile, upsertPoliticianByExternalId } from "./politicians";
-
-async function makeSourceItem(): Promise<string> {
-  return createCollectedItem({
-    collectorType: "manual_upload",
-    collectorId: "test",
-    sourceUrl: "https://example.com",
-    submittedBy: "test",
-    contentHash: randomUUID(),
-    contentType: "application/json",
-    rawPayload: "{}",
-  });
-}
 
 describe("Stage 1 — provenance constraint", () => {
   it("rejects a politician with no source_item at the database layer", async () => {
@@ -96,7 +83,7 @@ describe("Stage 1 — upsertPoliticianByExternalId", () => {
 
 // Kept current by a BEFORE UPDATE trigger (migrations/0002_updated_at_trigger.sql),
 // not application code — see src/db/schema/_shared.ts. Politician is just
-// one of the 31 tables the trigger is attached to; this proves the
+// one of the tables the trigger is attached to; this proves the
 // mechanism itself works rather than re-testing it per table.
 describe("Stage 1 — updated_at trigger", () => {
   it("bumps updated_at on UPDATE, independent of application code", async () => {

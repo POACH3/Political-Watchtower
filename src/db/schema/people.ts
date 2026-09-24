@@ -1,6 +1,19 @@
 // "People & positions" — see SPEC.md "Aggregator output schema".
 
-import { boolean, date, pgEnum, pgTable, text, unique, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import {
+  boolean,
+  check,
+  date,
+  foreignKey,
+  index,
+  pgEnum,
+  pgTable,
+  text,
+  unique,
+  uuid,
+  type AnyPgColumn,
+} from "drizzle-orm/pg-core";
 import { idColumn, timestampColumns } from "./_shared";
 import { collectedItems } from "./collected-items";
 import { candidacies, chambers, districts, jurisdictions } from "./jurisdictions";
@@ -66,7 +79,11 @@ export const politicianAliases = pgTable(
     locked: boolean("locked").notNull().default(false),
     ...timestampColumns,
   },
-  (table) => [unique().on(table.politicianId, table.aliasText, table.aliasType)],
+  (table) => [
+    unique().on(table.politicianId, table.aliasText, table.aliasType),
+    // Stage 9 entity resolution's first-pass lookup is case-insensitive.
+    index("politician_aliases_alias_text_lower_idx").on(sql`lower(${table.aliasText})`),
+  ],
 );
 
 export const terms = pgTable(
@@ -85,11 +102,14 @@ export const terms = pgTable(
     chamberId: uuid("chamber_id")
       .notNull()
       .references((): AnyPgColumn => chambers.id),
-    districtId: uuid("district_id")
-      .notNull()
-      .references((): AnyPgColumn => districts.id),
+    // No column-level .references() — the composite FK below is this
+    // column's FK, and additionally guarantees the district belongs to
+    // chamberId (previously a term could point at a district in a
+    // different chamber, and nothing noticed).
+    districtId: uuid("district_id").notNull(),
     // The race that put this person in this seat, if tracked.
-    candidacyId: uuid("candidacy_id").references((): AnyPgColumn => candidacies.id),
+    // No column-level .references() — see the composite FK below.
+    candidacyId: uuid("candidacy_id"),
     // Nullable — per the "only provenance + the one identifying field are
     // required" principle: a term is still real and worth recording even
     // before we know (or for a nonpartisan legislature, ever know) the
@@ -104,7 +124,31 @@ export const terms = pgTable(
       .references(() => collectedItems.id),
     ...timestampColumns,
   },
-  (table) => [unique().on(table.politicianId, table.chamberId, table.startDate)],
+  (table) => [
+    unique().on(table.politicianId, table.chamberId, table.startDate),
+    foreignKey({
+      name: "terms_district_in_chamber_fk",
+      columns: [table.districtId, table.chamberId],
+      foreignColumns: [districts.id, districts.chamberId],
+    }),
+    // A term's candidacy must be the same politician's. MATCH SIMPLE
+    // skips it when candidacyId is NULL (no race tracked).
+    foreignKey({
+      name: "terms_candidacy_is_own_fk",
+      columns: [table.candidacyId, table.politicianId],
+      foreignColumns: [candidacies.id, candidacies.politicianId],
+    }),
+    index("terms_chamber_idx").on(table.chamberId),
+    index("terms_district_idx").on(table.districtId),
+    // The current-roster query: who holds a seat right now.
+    index("terms_current_idx")
+      .on(table.chamberId, table.districtId)
+      .where(sql`${table.endDate} IS NULL`),
+    // Strictly after, not >=: the exclusion constraint below treats a
+    // term as the half-open range [start, end), and an empty range would
+    // never conflict with anything.
+    check("terms_dates_ordered", sql`${table.endDate} IS NULL OR ${table.endDate} > ${table.startDate}`),
+  ],
 );
 // No two Term rows for the same politicianId + chamberId should have
 // overlapping [startDate, endDate) ranges — added as a real Postgres

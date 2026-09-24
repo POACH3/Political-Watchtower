@@ -1,20 +1,34 @@
 // "Legislation" — see SPEC.md "Aggregator output schema".
 
-import { date, pgEnum, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { check, date, index, pgEnum, pgTable, text, unique, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { idColumn, timestampColumns } from "./_shared";
 import { collectedItems } from "./collected-items";
 import { legislativeSessions } from "./jurisdictions";
 import { politicians } from "./people";
 
-// Reference data, seeded once from the fixed ~10-15 taxonomy (Stage 1
-// "Key decisions to confirm") — not itself aggregator output.
-export const issueAreas = pgTable("issue_areas", {
-  ...idColumn,
-  name: text("name").notNull(),
-  slug: text("slug").notNull().unique(),
-  description: text("description"),
-  ...timestampColumns,
-});
+// Reference data, seeded once — not itself aggregator output. A
+// two-level hierarchy: top-level areas (no parent) are the fixed
+// ~10-15-item set the radar chart uses as axes; second-level areas roll
+// up to a parent. "Two levels" is a seed-data convention, not something
+// the schema enforces beyond ruling out a self-parent — the table is
+// seed-only, so a depth trigger would be machinery guarding against a
+// writer that doesn't exist.
+export const issueAreas = pgTable(
+  "issue_areas",
+  {
+    ...idColumn,
+    parentIssueAreaId: uuid("parent_issue_area_id").references((): AnyPgColumn => issueAreas.id),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    description: text("description"),
+    ...timestampColumns,
+  },
+  (table) => [
+    check("issue_areas_not_self_parent", sql`${table.parentIssueAreaId} <> ${table.id}`),
+    index("issue_areas_parent_idx").on(table.parentIssueAreaId),
+  ],
+);
 
 export const billStatusEnum = pgEnum("bill_status", [
   "introduced",
@@ -57,7 +71,13 @@ export const bills = pgTable(
       .references(() => collectedItems.id),
     ...timestampColumns,
   },
-  (table) => [unique().on(table.sessionId, table.externalBillId)],
+  (table) => [
+    unique().on(table.sessionId, table.externalBillId),
+    // Redundant as a key (id is already unique) but the target of
+    // votes' composite FK, which is how "a vote on this bill happened in
+    // the bill's own session" gets enforced by the database.
+    unique().on(table.id, table.sessionId),
+  ],
 );
 
 export const sponsorRoleEnum = pgEnum("sponsor_role", ["primary_sponsor", "cosponsor", "other"]);
@@ -83,7 +103,11 @@ export const billSponsors = pgTable(
       .references(() => collectedItems.id),
     ...timestampColumns,
   },
-  (table) => [unique().on(table.billId, table.politicianId)],
+  (table) => [
+    unique().on(table.billId, table.politicianId),
+    // "Bills this politician sponsored" — the profile page's access path.
+    index("bill_sponsors_politician_idx").on(table.politicianId),
+  ],
 );
 
 export const taggingMethodEnum = pgEnum("tagging_method", ["keyword_mapping", "ml_classification"]);
@@ -104,5 +128,9 @@ export const billIssueAreas = pgTable(
   },
   // Without this, a re-run of the tagger adds duplicate tags and the
   // Stage 6 radar chart double-counts.
-  (table) => [unique().on(table.billId, table.issueAreaId)],
+  (table) => [
+    unique().on(table.billId, table.issueAreaId),
+    // "Bills tagged with this issue area" — Stage 6 radar/search.
+    index("bill_issue_areas_issue_area_idx").on(table.issueAreaId),
+  ],
 );

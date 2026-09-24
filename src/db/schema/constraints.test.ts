@@ -2,22 +2,9 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/db";
 import { chambers, districts, politicianExternalIds, terms } from "@/db/schema";
-import { createCollectedItem } from "@/lib/services/collected-items";
 import { upsertJurisdiction } from "@/lib/services/jurisdictions";
 import { upsertPoliticianByExternalId } from "@/lib/services/politicians";
-import { pgErrorMessage } from "@/lib/test-utils";
-
-async function makeSourceItem(): Promise<string> {
-  return createCollectedItem({
-    collectorType: "manual_upload",
-    collectorId: "test",
-    sourceUrl: "https://example.com",
-    submittedBy: "test",
-    contentHash: randomUUID(),
-    contentType: "application/json",
-    rawPayload: "{}",
-  });
-}
+import { makeSourceItem, pgErrorMessage } from "@/lib/test-utils";
 
 describe("Term — no-overlap exclusion constraint", () => {
   let politicianId: string;

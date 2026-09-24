@@ -1,7 +1,7 @@
 // "Review & audit" — see SPEC.md "Aggregator output schema". Both tables
 // here are deliberately not FK'd to their targets: ReviewAction spans
-// five different target tables (claim/promise/news_item_politician/
-// politician_alias/collected_item) and SuppressionRule matches by
+// six different target tables (claim/promise/news_item_politician/
+// politician_alias/collected_item/affiliation) and SuppressionRule matches by
 // pattern, not by row — polymorphism is the right call here, unlike
 // PromiseEvidence/ClaimResponse's two-to-four-type cases where exclusive-
 // arc FKs were worth the extra columns.
@@ -15,6 +15,9 @@ export const reviewTargetTypeEnum = pgEnum("review_target_type", [
   "news_item_politician",
   "politician_alias",
   "collected_item",
+  // Affiliation's table lands in Stage 10; the value is here now because
+  // SPEC.md lists it in ReviewAction/CommunityFlag's shared target set.
+  "affiliation",
 ]);
 
 // Written whenever an admin action changes a field that also has a

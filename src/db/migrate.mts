@@ -1,6 +1,4 @@
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
+import { runMigrations } from "./run-migrations";
 
 // Unlike Next.js (which auto-loads .env for `next dev`/`next build`) and
 // vitest.config.mts, this script has no framework loading .env for it —
@@ -8,16 +6,18 @@ import postgres from "postgres";
 // DATABASE_URL happened to already be set in the shell, silently using
 // the wrong connection (postgres' own OS-user/localhost defaults, not an
 // error) otherwise. Load it explicitly instead of relying on that.
+// (process.loadEnvFile never overrides a variable that's already set, so
+// a container's own DATABASE_URL still wins over .env.)
 try {
   process.loadEnvFile();
 } catch {
   // no .env present — fine in CI, where DATABASE_URL is already set
 }
 
-const client = postgres(process.env.DATABASE_URL!, { max: 1 });
-const db = drizzle(client);
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is not set");
+}
 
-await migrate(db, { migrationsFolder: "./src/db/migrations" });
-await client.end();
+await runMigrations(process.env.DATABASE_URL);
 
 console.log("Migrations applied.");

@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  index,
   pgEnum,
   pgTable,
   text,
@@ -14,10 +15,11 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { idColumn, timestampColumns } from "./_shared";
+import { idColumn, suppressionConsistentCheck, timestampColumns } from "./_shared";
 import { collectedItems } from "./collected-items";
 import { newsItems } from "./news";
 import { politicians } from "./people";
+import { processorRuns } from "./processor-runs";
 
 export const verificationStatusEnum = pgEnum("verification_status", [
   "UNVERIFIED_CLAIM",
@@ -32,35 +34,46 @@ export const verificationStatusEnum = pgEnum("verification_status", [
 
 export const verificationSetByEnum = pgEnum("verification_set_by", ["processor", "admin"]);
 
-export const claims = pgTable("claims", {
-  ...idColumn,
-  newsItemId: uuid("news_item_id")
-    .notNull()
-    .references(() => newsItems.id),
-  exactText: text("exact_text").notNull(),
-  normalizedClaim: text("normalized_claim"),
-  // Who said it, as written/reported.
-  claimantText: text("claimant_text").notNull(),
-  // When the claimant is a politician already tracked — lets the site
-  // show "this allegation came from their opponent."
-  claimantPoliticianId: uuid("claimant_politician_id").references(() => politicians.id),
-  publicationTimestamp: timestamp("publication_timestamp", { withTimezone: true }),
-  retrievedTimestamp: timestamp("retrieved_timestamp", { withTimezone: true }).notNull().defaultNow(),
-  verificationStatus: verificationStatusEnum("verification_status").notNull().default("UNVERIFIED_CLAIM"),
-  verificationSetBy: verificationSetByEnum("verification_set_by").notNull().default("processor"),
-  verificationSetAt: timestamp("verification_set_at", { withTimezone: true }).notNull().defaultNow(),
-  // A processor re-run skips a locked row instead of silently
-  // recomputing over a human's override.
-  verificationLocked: boolean("verification_locked").notNull().default(false),
-  isSuppressed: boolean("is_suppressed").notNull().default(false),
-  suppressedAt: timestamp("suppressed_at", { withTimezone: true }),
-  suppressionReason: text("suppression_reason"),
-  // Which extraction/summarization pass produced this row.
-  modelVersion: text("model_version"),
-  // The claim-preserving summary, not a bare assertion.
-  generatedSummary: text("generated_summary"),
-  ...timestampColumns,
-});
+export const claims = pgTable(
+  "claims",
+  {
+    ...idColumn,
+    newsItemId: uuid("news_item_id")
+      .notNull()
+      .references(() => newsItems.id),
+    exactText: text("exact_text").notNull(),
+    normalizedClaim: text("normalized_claim"),
+    // Who said it, as written/reported.
+    claimantText: text("claimant_text").notNull(),
+    // When the claimant is a politician already tracked — lets the site
+    // show "this allegation came from their opponent."
+    claimantPoliticianId: uuid("claimant_politician_id").references(() => politicians.id),
+    publicationTimestamp: timestamp("publication_timestamp", { withTimezone: true }),
+    retrievedTimestamp: timestamp("retrieved_timestamp", { withTimezone: true }).notNull().defaultNow(),
+    verificationStatus: verificationStatusEnum("verification_status").notNull().default("UNVERIFIED_CLAIM"),
+    verificationSetBy: verificationSetByEnum("verification_set_by").notNull().default("processor"),
+    verificationSetAt: timestamp("verification_set_at", { withTimezone: true }).notNull().defaultNow(),
+    // A processor re-run skips a locked row instead of silently
+    // recomputing over a human's override.
+    verificationLocked: boolean("verification_locked").notNull().default(false),
+    isSuppressed: boolean("is_suppressed").notNull().default(false),
+    suppressedAt: timestamp("suppressed_at", { withTimezone: true }),
+    suppressionReason: text("suppression_reason"),
+    // Which extraction/summarization pass produced this row — processor
+    // version, model and config are derivable through the join, not
+    // duplicated per row (see SPEC.md "ProcessorRun").
+    processorRunId: uuid("processor_run_id").references(() => processorRuns.id),
+    // The claim-preserving summary, not a bare assertion.
+    generatedSummary: text("generated_summary"),
+    ...timestampColumns,
+  },
+  (table) => [
+    suppressionConsistentCheck("claims_suppression_consistent", table),
+    index("claims_news_item_idx").on(table.newsItemId),
+    index("claims_claimant_politician_idx").on(table.claimantPoliticianId),
+    index("claims_processor_run_idx").on(table.processorRunId),
+  ],
+);
 
 export const targetConfidenceEnum = pgEnum("target_confidence", ["confirmed", "inferred"]);
 
@@ -80,7 +93,11 @@ export const claimTargets = pgTable(
   // Without this, a claim-extraction re-run (e.g. on a new model_version)
   // duplicates the row — repeating an unproven allegation against the
   // same named person multiple times on their public profile.
-  (table) => [unique().on(table.claimId, table.politicianId)],
+  (table) => [
+    unique().on(table.claimId, table.politicianId),
+    // "Claims about this politician" — the profile page's access path.
+    index("claim_targets_politician_idx").on(table.politicianId),
+  ],
 );
 
 export const claimResponseStanceEnum = pgEnum("claim_response_stance", [
@@ -110,7 +127,20 @@ export const claimResponses = pgTable(
       "claim_responses_exactly_one_target",
       sql`num_nonnulls(${table.responseNewsItemId}, ${table.responseClaimId}) = 1`,
     ),
-    unique().on(table.claimId, table.responseNewsItemId, table.responseClaimId),
+    // One partial unique index per arc — a plain UNIQUE over two
+    // nullable columns treats NULLs as distinct and would never fire.
+    uniqueIndex("claim_responses_news_item_uq")
+      .on(table.claimId, table.responseNewsItemId)
+      .where(sql`${table.responseNewsItemId} IS NOT NULL`),
+    uniqueIndex("claim_responses_claim_uq")
+      .on(table.claimId, table.responseClaimId)
+      .where(sql`${table.responseClaimId} IS NOT NULL`),
+    index("claim_responses_response_news_item_idx")
+      .on(table.responseNewsItemId)
+      .where(sql`${table.responseNewsItemId} IS NOT NULL`),
+    index("claim_responses_response_claim_idx")
+      .on(table.responseClaimId)
+      .where(sql`${table.responseClaimId} IS NOT NULL`),
   ],
 );
 
@@ -141,6 +171,8 @@ export const claimSources = pgTable(
     // The same source can't be cited twice for the same claim — a
     // processor re-run would otherwise duplicate the row.
     unique().on(table.claimId, table.sourceItemId),
+    // Reverse lookup: "what derives from this collected item."
+    index("claim_sources_source_item_idx").on(table.sourceItemId),
   ],
 );
 
